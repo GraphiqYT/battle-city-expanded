@@ -1,0 +1,11 @@
+1. Las texturas de los tanques las guardaré en `assets\textures\tank\a`, `assets\textures\tank\b`, `assets\textures\tank\c`, `assets\textures\tank\d`, `assets\textures\tank\e`, `assets\textures\tank\f`, `assets\textures\tank\g`, `assets\textures\tank\h`.
+`a`, `b`, `c`, `d`, `e`, `f`, `g`, `h` son los colores del tanque.
+2. Como ves en la imagen, tenemos las carpetas de la `a` hasta la `h`. La carpeta `a` y `b` están listas, ahora falta dividir `Tank-c-n-direction-xx.png`, `Tank-d-n-direction-xx.png`, `Tank-e-n-direction-xx.png`, `Tank-f-n-direction-xx.png`, `Tank-g-n-direction-xx.png`, `Tank-h-n-direction-xx.png`.
+3. Las imagnees que te mencioné miden `128x128`. Como en `a` y `b` y debes seguir la regla de nombramiento.
+Dependiendo de la imagen el prefijo puede ser `Tank-c`, ..., `Tank-h`.
+luego sigue `-n`, que es la fila, va del `0` al `7`.
+luego sigue `-direction`. que bueno, dividis las columnas en parejas, quedando cuatro parejas. Leyendolo de izquierda a derecha te queda `up up left left down down right right`.
+luego sigue `-xx`, que es el frame, puede ser `00` o `01`, quedando `00 01 00 01 00 01 00 01`.
+
+`NOTA 1: OSEA, BASICAMENTE COMO ANTES, SOLO TE RECALCABA PARA QUE NO TE OLVIDES, TIENE QUE SER COHERENTE CON LA CARPETA A Y B.
+`NOTA 2: TODAVIA NO DIVIDAS, QUIERO TENER EN CLARO LO QUE VAS A HACER, LUEGO TE DOY EL OK.`
