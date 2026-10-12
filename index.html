@@ -7735,8 +7735,8 @@ OVER</div>
         const soundFiles = {
             levelStart: 'assets/sounds/start_menu.wav',
             iceTurn: 'assets/sounds/Battle City SFX (4).wav',
-            playerMovement: 'assets/sounds/Battle City SFX (16).wav',
-            enemyMovement: 'assets/sounds/Battle City SFX (17).wav',
+            playerMovement: 'assets/sounds/player_movement.ogg',
+            enemyMovement: 'assets/sounds/enemy_movement.ogg',
             playerShot: 'assets/sounds/Battle City SFX (6).wav',
             wallHit: 'assets/sounds/Battle City SFX (5).wav',
             enemyHit: 'assets/sounds/Battle City SFX (2).wav',
@@ -7782,6 +7782,8 @@ OVER</div>
         const activeSoundSources = new Set();
         const pendingSoundEffects = [];
         const PENDING_SOUND_EFFECT_TTL_MS = 2000;
+        const SOUND_LOAD_CONCURRENCY = 4;
+        const SOUND_LOAD_TIMEOUT_MS = 30000;
         let soundPreloadPromise = null;
         let soundPreloadCompleted = 0;
         let audioLoadingScreenShown = false;
@@ -7933,7 +7935,10 @@ OVER</div>
 
             const soundPath = getAssetUrl(soundFiles[name]);
             const controller = new AbortController();
-            const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+            const timeoutId = window.setTimeout(
+                () => controller.abort(),
+                SOUND_LOAD_TIMEOUT_MS
+            );
             const load = fetch(soundPath, { signal: controller.signal })
                 .then((response) => {
                     if (!response.ok) {
@@ -7969,11 +7974,25 @@ OVER</div>
 
         function preloadGameSounds() {
             if (!soundPreloadPromise) {
-                soundPreloadPromise = Promise.allSettled(
-                    Object.keys(soundFiles).map((soundName) => loadSoundBuffer(soundName))
-                ).then((results) => {
+                const soundNames = Object.keys(soundFiles);
+                soundPreloadPromise = (async () => {
+                    const results = [];
+                    for (
+                        let index = 0;
+                        index < soundNames.length;
+                        index += SOUND_LOAD_CONCURRENCY
+                    ) {
+                        const batchResults = await Promise.allSettled(
+                            soundNames
+                                .slice(index, index + SOUND_LOAD_CONCURRENCY)
+                                .map((soundName) => loadSoundBuffer(soundName))
+                        );
+                        results.push(...batchResults);
+                    }
+                    return results;
+                })().then((results) => {
                     const failedLoads = results
-                        .map((result, index) => ({ result, name: Object.keys(soundFiles)[index] }))
+                        .map((result, index) => ({ result, name: soundNames[index] }))
                         .filter(({ result }) => result.status === 'rejected');
                     failedLoads.forEach(({ result, name }) => {
                         console.error(`Unable to preload sound "${name}".`, result.reason);
