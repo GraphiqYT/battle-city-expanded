@@ -1,0 +1,52 @@
+button:not(:disabled),
+.enemy-powerup-toggle {
+    transition: filter 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+button:not(:disabled):hover,
+.enemy-powerup-toggle:hover {
+    filter: brightness(1.12);
+    transform: translateY(-1px) scale(1.02);
+}
+
+.tile-button:not(:disabled):hover {
+    filter: brightness(1.2);
+}
+
+.app-shell button:not(:disabled):hover {
+    transform: translateY(-2px) scale(1.02);
+}
+
+button:not(:disabled):active,
+.enemy-powerup-toggle:active {
+    filter: brightness(0.88);
+}
+
+.app-shell button:not(:disabled):active {
+    transform: translateY(1px) scale(0.98);
+}
+
+.ui-interaction-click {
+    animation: ui-interaction-click 150ms ease-out;
+}
+
+@keyframes ui-interaction-click {
+    from {
+        filter: brightness(1.35);
+    }
+
+    to {
+        filter: brightness(1);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    button:not(:disabled),
+    .enemy-powerup-toggle {
+        transition: none;
+    }
+
+    .ui-interaction-click {
+        animation: none;
+    }
+}

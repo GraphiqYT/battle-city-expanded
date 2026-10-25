@@ -1,0 +1,7 @@
+{
+    "format": "BC90E-PACK-LIST",
+    "version": 1,
+    "packs": [
+        "Test Pack.bcepack.json"
+    ]
+}

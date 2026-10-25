@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Battle City Expanded - Play</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/ui-button-interactions.css">
+</head>
+<body class="tile-textures-mode pixelated-ui" data-game-mode="play">
+    <img id="pixelCursorImage" src="assets/textures/ui/Mouse-00.png" alt="">
+    <div id="startMenu" class="start-menu" aria-label="Start menu">
+        <div class="start-menu-stage">
+            <div id="initialAssetLoading" role="status">
+                <span id="initialAssetLoadingLabel">Loading game assets.</span>
+                <span id="initialAssetLoadingProgress"></span>
+            </div>
+            <button id="retryInitialAssetsButton" type="button" hidden>Retry</button>
+            <details id="initialAssetReport" class="asset-diagnostic-report" hidden>
+                <summary>Missing assets</summary>
+                <ul></ul>
+                <p>Check that the assets folder is beside play.html, preserve file names and capitalization, then retry. If opened as a local file, serve the folder over HTTP or HTTPS.</p>
+            </details>
+            <div class="start-menu-content">
+                <img class="start-menu-logo" src="assets/textures/ui/Battle-City-Expanded.png"
+                    alt="Battle City Expanded" width="352" height="64">
+                <nav class="start-menu-options" aria-label="Main menu">
+                    <button id="playFromMenuButton" class="start-menu-option" type="button">PLAY</button>
+                    <button id="openEditorButton" class="start-menu-option start-menu-editor-button"
+                        type="button">STAGE EDITOR</button>
+                    <button id="openPackEditorButton" class="start-menu-option start-menu-editor-button"
+                        type="button">PACK EDITOR</button>
+                    <button id="openMenuSettingsButton" class="start-menu-option start-menu-editor-button"
+                        type="button">SETTINGS</button>
+                </nav>
+                <div class="start-menu-brand">
+                    <span>A fan-made remaster by <span class="start-menu-brand-credit">Graphiq</span></span>
+                    <span>Inspired by <span class="start-menu-brand-highlight">Battle City</span>. <span
+                        class="start-menu-brand-credit">Namco</span>, 1985</span>
+                </div>
+            </div>
+            <span class="start-menu-corner-label start-menu-version" data-app-version></span>
+            <span class="start-menu-corner-label start-menu-email">graphiqyt@gmail.com</span>
+        </div>
+    </div>
+    <section id="gamePlayScreen" aria-label="Game" hidden>
+        <div class="game-play-stage">
+            <div id="gamePlayCanvasHost"></div>
+            <div id="gamePauseMessage" aria-live="polite">PAUSED</div>
+            <div id="levelTransitionBlack" aria-hidden="true" hidden></div>
+            <section id="levelScoreScreen" aria-label="Stage score" aria-live="polite" hidden>
+                <h2>STAGE CLEAR</h2>
+                <div id="levelScoreRanks"></div>
+                <p id="levelScoreTotal" hidden></p>
+            </section>
+            <div id="levelIntroCurtain" aria-hidden="true" hidden>
+                <div class="level-intro-half level-intro-half-top"></div>
+                <div class="level-intro-half level-intro-half-bottom"></div>
+                <p id="levelIntroTitle"></p>
+            </div>
+            <aside id="gamePlayHud" aria-label="Game status">
+                <button id="gamePlayReturnButton" type="button">Menu</button>
+            </aside>
+        </div>
+    </section>
+    <section id="packEditorScreen" class="pack-editor-screen" aria-label="Pack Editor" hidden>
+        <header class="pack-editor-header">
+            <div class="pack-editor-heading">
+                <h1 id="packEditorTitle">Pack Editor</h1>
+                <p id="packEditorDescription">Browse and organize packs, worlds, and stages</p>
+            </div>
+            <button id="returnFromPackEditorButton" type="button">Back to Menu</button>
+        </header>
+        <div class="pack-editor-main">
+            <main class="pack-editor-workspace">
+                <nav class="pack-editor-breadcrumb" aria-label="Current location">
+                    <span id="packEditorBreadcrumb"></span>
+                </nav>
+                <p id="packEditorStatus" class="pack-editor-status" role="status"></p>
+                <div id="packEditorGrid" class="pack-editor-grid" aria-label="Pack contents"></div>
+                <footer id="packEditorWorkspaceActions" class="pack-editor-footer">
+                    <button id="packsDirectoryButton" type="button">Choose Packs Folder</button>
+                    <button id="importPackButton" type="button" hidden>Import Pack File</button>
+                    <input id="importPackFileInput" type="file" accept="application/json,.json" hidden>
+                    <button id="backToWorldsButton" type="button" hidden>Back to Worlds</button>
+                    <button id="importStageButton" type="button" hidden>Import Level from Clipboard</button>
+                    <button id="newPackButton" class="pack-editor-primary" type="button" hidden>
+                        New Pack
+                    </button>
+                    <button id="newWorldButton" class="pack-editor-primary" type="button" hidden>
+                        New World
+                    </button>
+                    <button id="saveStageToPackButton" class="pack-editor-primary" type="button" hidden>
+                        Add Current Stage
+                    </button>
+                    <button id="exportPackButton" type="button" hidden>Export Pack</button>
+                </footer>
+            </main>
+        </div>
+        <p id="packDirectoryLocation" class="pack-directory-location"></p>
+    </section>
+    <dialog id="newPackDialog" aria-labelledby="newPackTitle">
+        <form id="newPackForm" class="png-export-form">
+            <h2 id="newPackTitle">Create Pack</h2>
+            <label for="newPackNameInput">
+                Pack name
+                <input id="newPackNameInput" type="text" maxlength="80" required>
+            </label>
+            <div class="png-export-actions">
+                <button id="cancelNewPackButton" type="button">Cancel</button>
+                <button class="pack-editor-primary" type="submit">Create</button>
+            </div>
+        </form>
+    </dialog>
+    <dialog id="newWorldDialog" aria-labelledby="newWorldTitle">
+        <form id="newWorldForm" class="png-export-form">
+            <h2 id="newWorldTitle">Create World</h2>
+            <label for="newWorldNameInput">
+                World name
+                <input id="newWorldNameInput" type="text" maxlength="80" required>
+            </label>
+            <div class="png-export-actions">
+                <button id="cancelNewWorldButton" type="button">Cancel</button>
+                <button class="pack-editor-primary" type="submit">Create</button>
+            </div>
+        </form>
+    </dialog>
+    <dialog id="packConfirmDialog" aria-labelledby="packConfirmTitle">
+        <form method="dialog" class="png-export-form">
+            <h2 id="packConfirmTitle">Confirm action</h2>
+            <p id="packConfirmText"></p>
+            <div class="png-export-actions">
+                <button value="cancel">Cancel</button>
+                <button id="packConfirmAcceptButton" class="pack-editor-primary" value="confirm">
+                    Confirm
+                </button>
+            </div>
+        </form>
+    </dialog>
+    <dialog id="renamePackItemDialog" aria-labelledby="renamePackItemTitle">
+        <form id="renamePackItemForm" class="png-export-form">
+            <h2 id="renamePackItemTitle">Rename</h2>
+            <label for="renamePackItemInput">
+                Name
+                <input id="renamePackItemInput" type="text" maxlength="80" required>
+            </label>
+            <div class="png-export-actions">
+                <button id="cancelRenamePackItemButton" type="button">Cancel</button>
+                <button class="pack-editor-primary" type="submit">Save</button>
+            </div>
+        </form>
+    </dialog>
+    <dialog id="worldPropertiesDialog" aria-labelledby="worldPropertiesTitle">
+        <form id="worldPropertiesForm" class="png-export-form">
+            <h2 id="worldPropertiesTitle">World Properties</h2>
+            <label>
+                <span><input id="worldForceLivesInput" type="checkbox"> Force initial lives</span>
+            </label>
+            <label>
+                Initial lives
+                <input id="worldInitialLivesInput" type="number" inputmode="numeric" min="0" max="999" value="3">
+            </label>
+            <label>
+                <span><input id="worldAutoAdvanceInput" type="checkbox"> Auto-advance to the next stage</span>
+            </label>
+            <div class="png-export-actions">
+                <button id="cancelWorldPropertiesButton" type="button">Cancel</button>
+                <button class="pack-editor-primary" type="submit">Save Properties</button>
+            </div>
+        </form>
+    </dialog>
+    <div class="app-shell" hidden>
+        <header class="app-header">
+            <div>
+                <h1>Battle City Editor, Stage Editor</h1>
+                <p>Build, configure and test your stage</p>
+                <p id="assetLoadStatus" role="status" hidden></p>
+                <details id="assetLoadReport" class="asset-diagnostic-report" hidden>
+                    <summary>Missing assets</summary>
+                    <ul></ul>
+                    <p>Check the assets folder and file names, then use Retry in Settings. If opened as a local file, serve the folder over HTTP or HTTPS.</p>
+                </details>
+            </div>
+        </header>
+        <section class="settings-grid" aria-label="Editor settings">
+            <details id="levelDataPanel" class="serialization-panel" aria-label="Level data">
+                <summary>Level data</summary>
+                <div class="level-data-expander" inert>
+                  <div class="level-data-content">
+                    <details class="level-data-section" open>
+                        <summary>Map and data</summary>
+                        <div class="level-data-section-content">
+                            <section class="dimension-panel" aria-label="Canvas dimensions">
+                                <label>
+                                    Width
+                                    <input id="mapWidthInput" type="number" inputmode="numeric" min="4" max="64" value="26">
+                                </label>
+                                <label>
+                                    Height
+                                    <input id="mapHeightInput" type="number" inputmode="numeric" min="4" max="64" value="26">
+                                </label>
+                                <button id="resizeMapButton" type="button">Apply Size</button>
+                            </section>
+                            <div class="level-code-field">
+                                <textarea id="levelCode" aria-label="Compiled level string" spellcheck="false"></textarea>
+                            </div>
+                            <div class="level-code-actions serialization-actions" aria-label="Level data actions">
+                                <button id="exportButton" type="button">Export Level</button>
+                                <button id="importButton" type="button">Import Level</button>
+                                <button id="copyLevelCodeButton" class="level-code-icon-button" type="button"
+                                    aria-label="Copy level data" title="Copy level data">
+                                    <img src="assets/textures/ui/copy.png" alt="">
+                                </button>
+                                <button id="pasteLevelCodeButton" class="level-code-icon-button" type="button"
+                                    aria-label="Paste level data" title="Paste level data">
+                                    <img src="assets/textures/ui/paste.png" alt="">
+                                </button>
+                                <button id="shareLevelCodeButton" class="level-code-share-button" type="button"
+                                    aria-label="Share level data" title="Share level data">Share</button>
+                            </div>
+                        </div>
+                    </details>
+                    <details class="level-data-section">
+                        <summary>Level rules</summary>
+                        <div class="level-data-section-content">
+                            <label>
+                                Level Name
+                                <input id="levelName" type="text" value="Custom Stage" maxlength="120">
+                            </label>
+                            <label>
+                                Eagle Lose Condition
+                                <select id="eagleMode">
+                                    <option value="1">Mode 1: Lose if any Eagle dies</option>
+                                    <option value="2">Mode 2: Lose if all Eagles die</option>
+                                </select>
+                            </label>
+                            <div class="initial-lives-row">
+                                <button id="forceInitialLivesToggleButton"
+                                    class="force-initial-lives-toggle toggle-off" type="button"
+                                    aria-pressed="false">Force Initial Lives: OFF</button>
+                                <label>
+                                    Initial Lives
+                                    <input id="initialLivesInput" type="number" inputmode="numeric" min="0" max="999" step="1" value="3">
+                                </label>
+                                <label>
+                                    Max Enemies On Screen
+                                    <input id="maxActiveEnemiesInput" type="number" inputmode="numeric" min="1" max="20" step="1" value="4">
+                                </label>
+                            </div>
+                        </div>
+                    </details>
+                    <details class="level-data-section">
+                        <summary>Enemy spawn order</summary>
+                        <div class="level-data-section-content">
+                            <div class="enemy-order-panel">
+                                <label for="enemySpawnOrderEditor">Enemy Spawn Order</label>
+                                <div id="enemySpawnOrderEditor" class="enemy-order-list"></div>
+                                <div id="enemyOrderHorizontalScrollbar" class="enemy-order-scrollbar"
+                                    aria-label="Enemy spawn order horizontal scrollbar" hidden>
+                                    <div id="enemyOrderHorizontalScrollbarTrack"
+                                        class="enemy-order-scrollbar-track"></div>
+                                </div>
+                                <button id="addEnemySpawnOrderButton" class="enemy-order-add" type="button">
+                                    Add Enemy
+                                </button>
+                            </div>
+                        </div>
+                    </details>
+                  </div>
+                </div>
+            </details>
+        </section>
+        <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
+            <div class="settings-dialog-header">
+                <h2 id="settingsTitle">Settings</h2>
+                <button id="closeSettingsButton" class="settings-dialog-close" type="button"
+                    aria-label="Close settings" title="Close">
+                    ×
+                </button>
+            </div>
+            <details class="settings-section" open>
+                <summary>Appearance and page</summary>
+                <div class="settings-section-content simulation-controls settings-grid">
+                    <div class="settings-subgroup">
+                        <h3>Appearance</h3>
+                        <button id="themeToggleButton" type="button" aria-pressed="false">
+                            Theme: Dark
+                        </button>
+                        <button id="roundedUiButton" type="button">Rounded UI: OFF</button>
+                        <button id="pixelatedUiButton" type="button" aria-pressed="false">
+                            Pixelated UI: OFF
+                        </button>
+                        <label for="pixelatedUiFontSizeInput">
+                            Pixel font size
+                            <input id="pixelatedUiFontSizeInput" type="number" inputmode="numeric" min="4" max="24" step="1" value="8">
+                        </label>
+                        <button id="pixelCursorButton" type="button">Pixel Cursor: OFF</button>
+                        <label>
+                            Cursor size
+                            <input id="pixelCursorSizeInput" type="number" inputmode="numeric" min="8" max="96" step="1" value="24">
+                        </label>
+                    </div>
+                    <div class="settings-subgroup">
+                        <h3>Page layout</h3>
+                        <label>
+                            <input id="menuFrameToggleInput" type="checkbox">
+                            Show menu frame
+                        </label>
+                        <label>
+                            <input id="pageScaleEnabledInput" type="checkbox">
+                            Adjust page size
+                        </label>
+                        <label>
+                            Page size
+                            <input id="pageScaleInput" type="range" min="60" max="100" step="5" value="100" disabled>
+                            <span id="pageScaleValue">100%</span>
+                        </label>
+                    </div>
+                </div>
+            </details>
+            <details class="settings-section">
+                <summary>Controls</summary>
+                <div class="settings-section-content simulation-controls">
+                    <button id="mobileControlsToggleButton" type="button" aria-pressed="false">
+                        Touch Controls: OFF
+                    </button>
+                    <div id="touchControlsConfigurator" class="touch-controls-configurator">
+                        <p>Drag the controls in the preview to set their positions.</p>
+                        <div id="touchControlsPreview" class="touch-controls-preview"
+                            aria-label="Draggable preview of touch controls">
+                            <div class="touch-controls-preview-pad" data-touch-preview="pad"
+                                aria-label="Move pad position">
+                                <button type="button" aria-hidden="true"></button>
+                                <button type="button" aria-hidden="true"></button>
+                                <button type="button" aria-hidden="true"></button>
+                                <button type="button" aria-hidden="true"></button>
+                            </div>
+                            <button id="touchControlsPreviewFire" class="touch-controls-preview-fire"
+                                data-touch-preview="fire" type="button" aria-label="Fire button position">
+                                <span aria-hidden="true">Z</span>
+                            </button>
+                        </div>
+                        <label class="touch-control-size-label">
+                            Arrow size
+                            <input id="touchPadSizeInput" type="range" min="40" max="100" step="2" value="52">
+                            <span id="touchPadSizeValue">52 px</span>
+                        </label>
+                        <label class="touch-control-size-label">
+                            Fire button size
+                            <input id="touchFireSizeInput" type="range" min="48" max="120" step="2" value="74">
+                            <span id="touchFireSizeValue">74 px</span>
+                        </label>
+                        <div class="touch-control-settings-actions">
+                            <button id="resetTouchControlsButton" type="button">Restore defaults</button>
+                            <span id="touchControlsSettingsStatus" role="status" aria-live="polite"></span>
+                        </div>
+                    </div>
+                </div>
+            </details>
+            <details class="settings-section settings-section-editor">
+                <summary>Editor view</summary>
+                <div class="settings-section-content simulation-controls settings-grid">
+                    <div class="settings-subgroup">
+                        <h3>Map display</h3>
+                        <button id="gridToggleButton" type="button" aria-pressed="false">Show Grid: OFF</button>
+                        <div class="tile-display-toggles">
+                            <button id="tileTextureToggle" type="button">Tile textures: ON</button>
+                            <button id="tileNameToggle" type="button">Tile name: OFF</button>
+                        </div>
+                        <label>
+                            Grid color
+                            <input id="gridColorInput" type="color" value="#292d33">
+                        </label>
+                        <label class="enemy-order-size-control">
+                            Enemy spawn order size
+                            <input id="enemyOrderSizeInput" type="number" inputmode="numeric" min="50" max="150"
+                                step="5" value="100">
+                        </label>
+                    </div>
+                    <div class="settings-subgroup">
+                        <h3>Editor controls</h3>
+                        <div class="editor-display-toggle-group" aria-label="Editor display controls">
+                            <button id="canvasModeControlsToggleButton" type="button" aria-pressed="true">
+                                Canvas tools: ON
+                            </button>
+                            <button id="mapZoomControlsToggleButton" type="button" aria-pressed="true">
+                                Map zoom: ON
+                            </button>
+                        </div>
+                        <label>
+                            <input id="mapZoomInputVisibleInput" type="checkbox" checked>
+                            Show map zoom percentage input
+                        </label>
+                        <label>
+                            Map zoom button size
+                            <select id="mapZoomButtonSizeInput">
+                                <option value="1">1×1 tiles</option>
+                                <option value="2" selected>2×2 tiles</option>
+                            </select>
+                        </label>
+                        <label>
+                            Canvas tool button size
+                            <select id="canvasToolButtonSizeInput">
+                                <option value="1">1×1 tiles</option>
+                                <option value="2" selected>2×2 tiles</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+            </details>
+            <details class="settings-section">
+                <summary>Assets and audio</summary>
+                <div class="settings-section-content simulation-controls">
+                    <div class="settings-subgroup settings-subgroup-wide">
+                        <h3>Game assets</h3>
+                        <p class="settings-help">
+                            Reload assets refreshes files and rebuilds their cache. Delete assets cache only removes saved copies.
+                        </p>
+                        <div class="settings-action-list">
+                            <button id="reloadAssetsButton" class="settings-action-button" type="button">
+                                Reload assets
+                            </button>
+                            <button id="deleteAssetsCacheButton" class="settings-action-button" type="button">
+                                Delete assets cache
+                            </button>
+                            <span id="assetCacheStatus" role="status" aria-live="polite"></span>
+                        </div>
+                    </div>
+                    <div class="settings-subgroup settings-subgroup-wide">
+                        <h3>Audio</h3>
+                        <p class="settings-help">
+                            Use this if the browser blocked audio or sound failed to start.
+                        </p>
+                        <div class="settings-action-list">
+                            <button id="recoverAudioButton" class="settings-action-button" type="button">
+                                Enable / retry audio
+                            </button>
+                            <span id="audioRecoveryStatus" role="status" aria-live="polite"></span>
+                        </div>
+                    </div>
+                </div>
+            </details>
+            <details class="settings-section">
+                <summary>Developer</summary>
+                <div class="settings-section-content simulation-controls">
+                    <div class="settings-subgroup settings-subgroup-wide">
+                        <h3>Debugging</h3>
+                        <p class="settings-help">
+                            Show development tools for diagnosing gameplay behavior.
+                        </p>
+                        <button id="debugToggleButton" type="button">Debug: OFF</button>
+                    </div>
+                </div>
+            </details>
+            <details class="settings-section">
+                <summary>Messages</summary>
+                <div class="settings-section-content simulation-controls">
+                    <div class="settings-subgroup settings-subgroup-wide">
+                        <h3>Message preferences</h3>
+                        <p class="settings-help">
+                            Show tips and confirmations again after hiding them.
+                        </p>
+                        <button id="resetMessagesButton" class="settings-action-button" type="button">
+                            Reset message preferences
+                        </button>
+                    </div>
+                </div>
+            </details>
+        </dialog>
+        <aside class="tile-sidebar" aria-label="Tile selector">
+            <h2>Tiles</h2>
+            <div id="tileSelector"></div>
+            <section id="routeVariantPalette" class="route-variant-palette" aria-label="Route variants" hidden>
+                <div class="route-variant-tabs" role="tablist" aria-label="Route shape">
+                    <button class="route-variant-tab" type="button" role="tab"
+                        data-route-tab="straight" aria-selected="true">Straight</button>
+                    <button class="route-variant-tab" type="button" role="tab"
+                        data-route-tab="l" aria-selected="false">L</button>
+                    <button class="route-variant-tab" type="button" role="tab"
+                        data-route-tab="t" aria-selected="false">T</button>
+                    <button class="route-variant-tab" type="button" role="tab"
+                        data-route-tab="x" aria-selected="false">X</button>
+                </div>
+                <div class="route-variant-group" data-route-category="straight" role="tabpanel">
+                    <h3>Straight (2 × 1)</h3>
+                    <div class="route-variant-options"></div>
+                </div>
+                <div class="route-variant-group" data-route-category="l" role="tabpanel" hidden>
+                    <h3>L corners (2 × 2)</h3>
+                    <div class="route-variant-options"></div>
+                </div>
+                <div class="route-variant-group" data-route-category="t" role="tabpanel" hidden>
+                    <h3>T intersections (2 × 2)</h3>
+                    <div class="route-variant-options"></div>
+                </div>
+                <div class="route-variant-group" data-route-category="x" role="tabpanel" hidden>
+                    <h3>X crossings (2 × 2)</h3>
+                    <div class="route-variant-options"></div>
+                </div>
+            </section>
+        </aside>
+        <main class="editor-layout">
+            <div id="canvasModeControls" class="canvas-mode-controls" aria-label="Canvas tools"></div>
+            <div class="canvas-panel">
+                <div id="playerLivesPanel" class="player-lives-panel" aria-label="Player lives">
+                    <div class="player-status-display">
+                        <div class="player-lives-display">
+                            <img class="player-lives-icon" src="assets/textures/ui/player.png" alt="Player">
+                            <span id="playerLivesCount" class="player-lives-count">003</span>
+                        </div>
+                        <div id="enemyLivesGrid" class="enemy-lives-grid" role="img" aria-label="Enemies remaining"></div>
+                    </div>
+                </div>
+                <div id="mapViewport" class="map-viewport" aria-label="Map viewport">
+                    <canvas id="gameCanvas" aria-label="BC90E map canvas"></canvas>
+                    <div id="editorInactivePauseMessage" aria-live="polite">
+                        PAUSE (INACTIVE)
+                    </div>
+                    <div class="map-edge-indicators" aria-hidden="true">
+                        <img class="map-edge-up" data-map-edge="up"
+                            src="assets/textures/ui/up.png" alt="">
+                        <img class="map-edge-right" data-map-edge="right"
+                            src="assets/textures/ui/right.png" alt="">
+                        <img class="map-edge-down" data-map-edge="down"
+                            src="assets/textures/ui/down.png" alt="">
+                        <img class="map-edge-left" data-map-edge="left"
+                            src="assets/textures/ui/left.png" alt="">
+                    </div>
+                </div>
+                <div id="mobileGameControls" class="mobile-game-controls" aria-label="Touch game controls" hidden>
+                    <div class="mobile-touch-pad" aria-label="Movement pad">
+                        <button type="button" data-game-direction="UP" aria-label="Move up"></button>
+                        <button type="button" data-game-direction="LEFT" aria-label="Move left"></button>
+                        <button type="button" data-game-direction="RIGHT" aria-label="Move right"></button>
+                        <button type="button" data-game-direction="DOWN" aria-label="Move down"></button>
+                    </div>
+                    <button type="button" data-game-fire aria-label="Fire (Z)">
+                        <span aria-hidden="true">Z</span>
+                    </button>
+                </div>
+                <div id="debugSettingsRow" class="debug-controls-row" hidden>
+                    <button id="hitboxToggleButton" type="button">Hitboxes: OFF</button>
+                    <button id="slowMotionButton" type="button">Slow Motion: OFF</button>
+                    <button id="enemyDebugToggleButton" type="button">Enemy Debug: OFF</button>
+                    <label class="tank-texture-control">
+                        Slow Motion Speed
+                        <input id="slowMotionScaleInput" type="number" inputmode="decimal" min="0" max="1" step="0.05" value="0.35">
+                    </label>
+                    <label class="tank-texture-control">
+                        Tank Rank
+                        <select id="playerTextureRowInput">
+                            <option value="0">Row 0</option>
+                            <option value="1">Row 1</option>
+                            <option value="2">Row 2</option>
+                            <option value="3">Row 3</option>
+                            <option value="4">Row 4</option>
+                            <option value="5">Row 5</option>
+                            <option value="6">Row 6</option>
+                            <option value="7">Row 7</option>
+                            <option value="8">Row 8</option>
+                            <option value="9">Row 9</option>
+                            <option value="10">Row 10</option>
+                        </select>
+                    </label>
+                    <label class="tank-texture-control">
+                        Tank Type
+                        <select id="playerTextureTypeInput">
+                            <option value="a">a</option>
+                            <option value="b">b</option>
+                            <option value="c">c</option>
+                            <option value="d">d</option>
+                            <option value="e">e</option>
+                            <option value="f">f</option>
+                            <option value="g">g</option>
+                            <option value="h">h</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="enemyDebugPanel" class="enemy-debug-panel" hidden></div>
+                <div id="gameOverMessage" aria-live="assertive">GAME
+OVER</div>
+                <button id="simulationButton" type="button">Play Level</button>
+            </div>
+            <div id="mapZoomControls" class="map-zoom-controls" aria-label="Map zoom and camera">
+                <button id="zoomInButton" class="map-zoom-button" type="button"
+                    aria-label="Zoom in" title="Zoom in">+</button>
+                <button id="zoomOutButton" class="map-zoom-button" type="button"
+                    aria-label="Zoom out" title="Zoom out">−</button>
+                <button id="zoomFitButton" class="map-zoom-button" type="button"
+                    aria-label="Fit map" title="Fit map">Fit</button>
+                <button id="panModeButton" class="map-zoom-button" type="button"
+                    aria-label="Pan mode" aria-pressed="false" title="Toggle pan mode">PAN</button>
+                <label class="map-zoom-input">
+                    <input id="mapZoomInput" type="number" inputmode="numeric" min="100" max="1600" step="10"
+                        value="100" aria-label="Map zoom percentage">
+                    <span aria-hidden="true">%</span>
+                </label>
+            </div>
+        </main>
+    </div>
+    <button id="settingsButton" type="button" aria-haspopup="dialog" aria-controls="settingsDialog">
+        Settings
+    </button>
+    <button id="menuButton" type="button">Menu</button>
+    <button id="enableGameAudioButton" type="button" hidden>Enable Audio</button>
+    <button id="backToPackEditorButton" class="pack-stage-edit-control" type="button" hidden>
+        Back to Pack Editor
+    </button>
+    <button id="savePackStageButton" class="pack-stage-edit-control" type="button" hidden>
+        Save Stage
+    </button>
+    <dialog id="pngExportDialog" aria-labelledby="pngExportTitle">
+        <form id="pngExportForm" class="png-export-form">
+            <div class="settings-dialog-header">
+                <h2 id="pngExportTitle">Export Map as PNG</h2>
+                <button id="pngExportCancelButton" class="settings-dialog-close" type="button"
+                    aria-label="Close PNG export" title="Close">
+                    ×
+                </button>
+            </div>
+            <p>
+                Animated tiles use frame 00, spawns use frame 04, and editor grid or shine effects are omitted.
+            </p>
+            <label for="pngExportTileSizeInput">
+                Tile size in the exported image
+                <select id="pngExportTileSizeInput" name="tileSize">
+                    <option value="8">8 px per tile</option>
+                    <option value="16">16 px per tile</option>
+                    <option value="32" selected>32 px per tile</option>
+                    <option value="64">64 px per tile</option>
+                    <option value="128">128 px per tile</option>
+                    <option value="256">256 px per tile</option>
+                    <option value="512">512 px per tile</option>
+                </select>
+            </label>
+            <p id="pngExportStatus" role="status">Preparing preview...</p>
+            <img id="pngExportPreview" alt="Preview of the exported map">
+            <div class="png-export-actions">
+                <button id="pngExportShareButton" type="button">Share PNG</button>
+                <a id="pngExportDownloadLink" download="battle-city-map.png" hidden>Download PNG</a>
+                <button type="submit">Export PNG</button>
+            </div>
+        </form>
+    </dialog>
+    <div id="messageDialog" role="dialog" aria-modal="true" aria-labelledby="messageText">
+        <div class="message-box">
+            <p id="messageText"></p>
+            <label>
+                <input id="dontShowMessageAgain" type="checkbox">
+                Do not show again
+            </label>
+            <button id="closeMessageButton" type="button">OK</button>
+            <div id="messageConfirmActions" class="message-confirm-actions" hidden>
+                <button id="cancelMessageConfirmationButton" type="button">Cancel</button>
+                <button id="acceptMessageConfirmationButton" type="button">Return to Menu</button>
+            </div>
+        </div>
+    </div>
+    <div id="audioLoadingDialog" role="dialog" aria-modal="true" aria-labelledby="audioLoadingTitle">
+        <div class="audio-loading-box">
+            <h2 id="audioLoadingTitle">Preparing level</h2>
+            <p id="audioLoadingText">Loading game assets and audio. Please wait...</p>
+            <details id="audioAssetReport" class="asset-diagnostic-report" hidden>
+                <summary>Missing assets</summary>
+                <ul></ul>
+                <p>Check the assets folder and file names, then retry. Local-file restrictions may require serving the folder over HTTP or HTTPS.</p>
+            </details>
+            <button id="startLoadedLevelButton" type="button" disabled>Start Level</button>
+            <button id="startMutedLevelButton" type="button">Start without audio</button>
+            <button id="retryGameAssetsButton" type="button" hidden>Retry Asset Loading</button>
+        </div>
+    </div>
+
+    <script src="js/level-data.js"></script>
+    <script src="js/app-version.js"></script>
+    <script src="js/asset-cache.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/road-tiles.js"></script>
+    <script src="js/map-camera.js"></script>
+    <script src="js/map-resizer.js"></script>
+    <script src="js/assets-loader.js"></script>
+    <script src="js/audio-system.js"></script>
+    <script src="js/settings.js"></script>
+    <script src="js/app-state.js"></script>
+    <script src="js/app-shell.js"></script>
+    <script src="js/app-navigation.js"></script>
+    <script src="js/pack-directory.js"></script>
+    <script src="js/pack-editor-actions.js"></script>
+    <script src="js/start-menu.js"></script>
+    <script src="js/gameplay-ui.js"></script>
+    <script src="js/canvas-tool-selection-ui.js"></script>
+    <script src="js/editor-ui.js"></script>
+    <script src="js/pack-editor-ui.js"></script>
+    <script src="js/pack-editor-renderer.js"></script>
+    <script src="js/pack-editor-dialogs.js"></script>
+    <script src="js/pack-doc.js"></script>
+    <script src="js/pack-stage-editor.js"></script>
+    <script src="js/pack-stage-reordering.js"></script>
+    <script src="js/enemy-spawn-order-ui.js"></script>
+    <script src="js/number-input-steppers.js"></script>
+    <script src="js/message-dialog.js"></script>
+    <script src="js/touch-controls-ui.js"></script>
+    <script src="js/pixel-cursor-ui.js"></script>
+    <script src="js/page-scale-ui.js"></script>
+    <script src="js/appearance-ui.js"></script>
+    <script src="js/png-export-ui.js"></script>
+    <script src="js/gameplay-lifecycle.js"></script>
+    <script src="js/play-pack-loader.js"></script>
+    <script src="js/level-code-actions.js"></script>
+    <script src="js/simulation-button-ui.js"></script>
+    <script src="js/level-intro.js"></script>
+    <script src="js/level-score-screen.js"></script>
+    <script src="js/startup-assets.js"></script>
+    <script src="js/map-png-renderer.js"></script>
+    <script src="js/canvas-controls-layout.js"></script>
+    <script src="js/pixel-labels.js"></script>
+    <script src="js/tile-selector-previews.js"></script>
+    <script src="js/debug-controls-ui.js"></script>
+    <script src="js/editor-view-controls-ui.js"></script>
+    <script src="js/ui-interaction-sounds.js"></script>
+    <script src="js/map-validation.js"></script>
+    <script src="js/app-bootstrap.js"></script>
+    <script src="js/index.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
