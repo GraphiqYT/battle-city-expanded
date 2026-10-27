@@ -71,8 +71,10 @@
     }
 
     function makeKey(kind, path, variant = '') {
-        const appVersion = global.BC90EAppVersion?.version ?? 'unversioned';
-        return `schema-${CACHE_SCHEMA_VERSION}:app-${appVersion}:${kind}:${path}:${variant}`;
+        const assetVersion = global.BC90EAppVersion?.assetCacheVersion ??
+            global.BC90EAppVersion?.version ??
+            'unversioned';
+        return `schema-${CACHE_SCHEMA_VERSION}:app-${assetVersion}:${kind}:${path}:${variant}`;
     }
 
     function isAvailable() {

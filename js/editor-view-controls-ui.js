@@ -14,6 +14,7 @@
         canvasModeControls,
         mapZoomControls,
         editorLayout,
+        settings,
         setToggleButtonState,
         getGridVisible,
         setGridVisible,
@@ -38,6 +39,49 @@
         resizeCanvas
     }) {
         function initialize() {
+            const savedView = settings.readPreference('editorView', {});
+            if (savedView && typeof savedView === 'object') {
+                setGridVisible(savedView.gridVisible ?? getGridVisible());
+                setTileTexturesVisible(
+                    savedView.tileTexturesVisible ?? getTileTexturesVisible()
+                );
+                setTouchControlsEnabled(
+                    savedView.touchControlsEnabled ?? getTouchControlsEnabled()
+                );
+                setCanvasModeControlsVisible(
+                    savedView.canvasToolsVisible ?? getCanvasModeControlsVisible()
+                );
+                setMapZoomControlsVisible(
+                    savedView.mapZoomControlsVisible ?? getMapZoomControlsVisible()
+                );
+                if (!Object.hasOwn(savedView, 'mapZoomInputVisible')) {
+                    mapZoomInputVisibleInput.checked = getMapZoomInputVisible();
+                }
+                if (Number.isFinite(savedView.mapZoomButtonSize)) {
+                    mapZoomButtonSizeInput.value = String(
+                        Math.min(5, Math.max(1, savedView.mapZoomButtonSize))
+                    );
+                }
+                if (Number.isFinite(savedView.canvasToolButtonSize)) {
+                    canvasToolButtonSizeInput.value = String(
+                        Math.min(5, Math.max(1, savedView.canvasToolButtonSize))
+                    );
+                }
+            }
+
+            function saveView() {
+                settings.writePreference('editorView', {
+                    gridVisible: getGridVisible(),
+                    tileTexturesVisible: getTileTexturesVisible(),
+                    touchControlsEnabled: getTouchControlsEnabled(),
+                    canvasToolsVisible: getCanvasModeControlsVisible(),
+                    mapZoomControlsVisible: getMapZoomControlsVisible(),
+                    mapZoomInputVisible: mapZoomInputVisibleInput.checked,
+                    mapZoomButtonSize: Number(mapZoomButtonSizeInput.value),
+                    canvasToolButtonSize: Number(canvasToolButtonSizeInput.value)
+                });
+            }
+
             const isGridVisible = getGridVisible();
             const areTileTexturesVisible = getTileTexturesVisible();
             const areTouchControlsEnabled = getTouchControlsEnabled();
@@ -85,6 +129,7 @@
                     `Show Grid: ${isGridVisible ? 'ON' : 'OFF'}`;
                 gridToggleButton.setAttribute('aria-pressed', String(isGridVisible));
                 setToggleButtonState(gridToggleButton, isGridVisible);
+                saveView();
             });
             tileTextureToggle.addEventListener('click', () => {
                 const areTileTexturesVisible = !getTileTexturesVisible();
@@ -97,6 +142,7 @@
                     `Tile textures: ${areTileTexturesVisible ? 'ON' : 'OFF'}`;
                 setToggleButtonState(tileTextureToggle, areTileTexturesVisible);
                 updateTileSelectorTextures(undefined, true);
+                saveView();
             });
             tileNameToggle.addEventListener('click', () => {
                 const isTileNamesVisible = !getTileNamesVisible();
@@ -127,6 +173,7 @@
                 if (!areTouchControlsEnabled) {
                     clearGameInputState();
                 }
+                saveView();
             });
             canvasModeControlsToggleButton.addEventListener('click', () => {
                 const areCanvasModeControlsVisible =
@@ -144,6 +191,7 @@
                     areCanvasModeControlsVisible
                 );
                 resizeCanvas();
+                saveView();
             });
             mapZoomControlsToggleButton.addEventListener('click', () => {
                 const areMapZoomControlsVisible = !getMapZoomControlsVisible();
@@ -164,13 +212,23 @@
                     areMapZoomControlsVisible
                 );
                 resizeCanvas();
+                saveView();
             });
             mapZoomInputVisibleInput.addEventListener(
                 'change',
-                updateMapZoomInputVisibility
+                () => {
+                    updateMapZoomInputVisibility();
+                    saveView();
+                }
             );
-            mapZoomButtonSizeInput.addEventListener('change', resizeCanvas);
-            canvasToolButtonSizeInput.addEventListener('change', resizeCanvas);
+            mapZoomButtonSizeInput.addEventListener('change', () => {
+                resizeCanvas();
+                saveView();
+            });
+            canvasToolButtonSizeInput.addEventListener('change', () => {
+                resizeCanvas();
+                saveView();
+            });
         }
 
         function bindPanModeButton(panModeButton) {

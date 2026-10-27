@@ -163,7 +163,35 @@
             getStoredPackDirectoryHandle,
             makeDirectoryPackId
         } = packDirectoryApi;
-        const { normalizePackDocument, serializePackDocument } = packDocumentApi;
+        const {
+            normalizePackDocument: normalizePackDocumentStructure,
+            serializePackDocument
+        } = packDocumentApi;
+        function normalizePackDocument(imported, fallbackId) {
+            const pack = normalizePackDocumentStructure(imported, fallbackId);
+            for (const world of pack.worlds) {
+                for (const stage of world.stages) {
+                    const parsed = levelDataCodec.parseLevelCode(stage.code, {
+                        validTileIds: TILE_COLORS,
+                        defaultEnemySpawnOrder: createDefaultEnemySpawnOrder,
+                        defaultInitialLives: MAX_PLAYER_LIVES,
+                        defaultMaxActiveEnemies: DEFAULT_MAX_ACTIVE_ENEMIES,
+                        defaultMaxActivePowerUps: DEFAULT_MAX_ACTIVE_POWER_UPS,
+                        maxPlayerLives: 999,
+                        maxActiveEnemies: MAX_ACTIVE_ENEMIES,
+                        maxActivePowerUps: MAX_ACTIVE_POWER_UPS,
+                        maxMapDimension: MAX_MAP_DIMENSION,
+                        powerUpCount: powerUpTextures.length
+                    });
+                    if (parsed.error) {
+                        throw new Error(
+                            `Stage "${stage.name}" contains invalid level data (${parsed.error}).`
+                        );
+                    }
+                }
+            }
+            return pack;
+        }
         const playPackLoader = playPackLoaderModule.createPlayPackLoader({
             normalizePackDocument,
             makeDirectoryPackId
@@ -547,7 +575,7 @@
                 isGamePaused = isPaused;
             },
             clearPressedKeys: () => pressedKeys.clear(),
-            clearTouchDirections: () => activeTouchDirections.clear(),
+            clearTouchDirections: clearTouchControlState,
             clearRequestedDirection: () => {
                 requestedDirection = null;
             },
@@ -647,7 +675,7 @@
             },
             levelName,
             resizeCanvas,
-            editingPackStage,
+            getEditingPackStage: () => editingPackStage,
             clearPackWorldAutoAdvance: () => {
                 window.clearTimeout(packWorldAutoAdvanceTimeout);
                 packWorldAutoAdvanceTimeout = 0;
@@ -998,7 +1026,7 @@
                 }
                 const code = (await navigator.clipboard.readText()).trim();
                 const sections = code.split('|');
-                if (!code.startsWith('BC90E|') || sections.length < 5 || sections.length > 9) {
+                if (!code.startsWith('BC90E|') || sections.length < 5 || sections.length > 10) {
                     throw new Error('The clipboard does not contain a valid BC90E level code.');
                 }
                 const pack = getSelectedPack();
@@ -1099,8 +1127,7 @@
             }
         });
         openMenuSettingsButton.addEventListener('click', () => {
-            settingsDialog.classList.add('menu-settings');
-            settingsDialog.showModal();
+            showSettingsDialog(true);
             window.requestAnimationFrame(applyTouchControlSettings);
         });
         async function loadPlayPacksFromFolder() {
@@ -1272,12 +1299,10 @@
         const touchControlsPreview = document.getElementById('touchControlsPreview');
         const touchControlsConfigurator =
             document.getElementById('touchControlsConfigurator');
-        const touchPreviewPad = touchControlsPreview.querySelector('[data-touch-preview="pad"]');
-        const touchPreviewFire = document.getElementById('touchControlsPreviewFire');
-        const touchPadSizeInput = document.getElementById('touchPadSizeInput');
-        const touchFireSizeInput = document.getElementById('touchFireSizeInput');
-        const touchPadSizeValue = document.getElementById('touchPadSizeValue');
-        const touchFireSizeValue = document.getElementById('touchFireSizeValue');
+        const touchControlSelectionInput =
+            document.getElementById('touchControlSelectionInput');
+        const touchControlSizeInput = document.getElementById('touchControlSizeInput');
+        const touchControlSizeValue = document.getElementById('touchControlSizeValue');
         const resetTouchControlsButton =
             document.getElementById('resetTouchControlsButton');
         const touchControlsSettingsStatus =
@@ -1286,13 +1311,17 @@
         if (!settingsApi) {
             throw new Error('The settings module did not load.');
         }
-        const DEFAULT_TOUCH_CONTROLS = settingsApi.DEFAULT_TOUCH_CONTROLS;
-        const copyDefaultTouchControls = () => ({
-            pad: { ...DEFAULT_TOUCH_CONTROLS.pad },
-            fire: { ...DEFAULT_TOUCH_CONTROLS.fire },
-            padSize: DEFAULT_TOUCH_CONTROLS.padSize,
-            fireSize: DEFAULT_TOUCH_CONTROLS.fireSize
-        });
+        const copyDefaultTouchControls = () => {
+            const defaults = settingsApi.createDefaultTouchControls();
+            return {
+                controls: Object.fromEntries(
+                    settingsApi.TOUCH_CONTROL_IDS.map((id) => [
+                        id,
+                        { ...defaults.controls[id] }
+                    ])
+                )
+            };
+        };
         let touchControlSettings = settingsApi.loadTouchControls();
 
         function saveTouchControlSettings() {
@@ -1308,12 +1337,9 @@
             mobileGameControls,
             touchControlsPreview,
             touchControlsConfigurator,
-            touchPreviewPad,
-            touchPreviewFire,
-            touchPadSizeInput,
-            touchFireSizeInput,
-            touchPadSizeValue,
-            touchFireSizeValue,
+            touchControlSelectionInput,
+            touchControlSizeInput,
+            touchControlSizeValue,
             resetTouchControlsButton,
             touchControlsSettingsStatus,
             getSettings: () => touchControlSettings,
@@ -1365,6 +1391,8 @@
             document.getElementById('forceInitialLivesToggleButton');
         let isForceInitialLivesEnabled = false;
         const maxActiveEnemiesInput = document.getElementById('maxActiveEnemiesInput');
+        const maxActivePowerUpsInput =
+            document.getElementById('maxActivePowerUpsInput');
         const enemySpawnOrderEditor = document.getElementById('enemySpawnOrderEditor');
         const addEnemySpawnOrderButton = document.getElementById('addEnemySpawnOrderButton');
         const eagleMode = document.getElementById('eagleMode');
@@ -1392,6 +1420,8 @@
         const debugSettingsRow = document.getElementById('debugSettingsRow');
         const hitboxToggleButton = document.getElementById('hitboxToggleButton');
         const slowMotionButton = document.getElementById('slowMotionButton');
+        const defeatAllEnemiesButton =
+            document.getElementById('defeatAllEnemiesButton');
         const enemyDebugToggleButton = document.getElementById('enemyDebugToggleButton');
         const enemyDebugPanel = document.getElementById('enemyDebugPanel');
         const slowMotionScaleInput = document.getElementById('slowMotionScaleInput');
@@ -1415,6 +1445,46 @@
         const settingsButton = document.getElementById('settingsButton');
         const settingsDialog = document.getElementById('settingsDialog');
         const closeSettingsButton = document.getElementById('closeSettingsButton');
+        function showSettingsDialog(fromMenu = false) {
+            settingsDialog.classList.toggle('menu-settings', fromMenu);
+            if (typeof settingsDialog.showModal === 'function') {
+                if (!settingsDialog.hasAttribute('open')) {
+                    try {
+                        settingsDialog.showModal();
+                        return;
+                    } catch (error) {
+                        console.warn(
+                            'Could not open the native settings dialog; using fallback.',
+                            error
+                        );
+                    }
+                } else {
+                    return;
+                }
+            }
+
+            settingsDialog.setAttribute('open', '');
+            document.body.classList.add('settings-dialog-fallback-open');
+        }
+
+        function closeSettingsDialog() {
+            if (
+                typeof settingsDialog.close === 'function' &&
+                settingsDialog.hasAttribute('open')
+            ) {
+                settingsDialog.close();
+                return;
+            }
+
+            settingsDialog.removeAttribute('open');
+            settingsDialog.classList.remove('menu-settings');
+            document.body.classList.remove('settings-dialog-fallback-open');
+        }
+
+        function isSettingsDialogOpen() {
+            return settingsDialog.hasAttribute('open');
+        }
+
         const levelDataPanel = document.getElementById('levelDataPanel');
         const levelDataExpander = levelDataPanel.querySelector('.level-data-expander');
         let levelDataCloseTimer = 0;
@@ -1426,7 +1496,10 @@
         const audioAssetReport = document.getElementById('audioAssetReport');
         const startLoadedLevelButton = document.getElementById('startLoadedLevelButton');
         const startMutedLevelButton = document.getElementById('startMutedLevelButton');
+        const retryAudioLoadingButton = document.getElementById('retryAudioLoadingButton');
         const retryGameAssetsButton = document.getElementById('retryGameAssetsButton');
+        const cancelGameAssetPreparationButton =
+            document.getElementById('cancelGameAssetPreparationButton');
 
         const MAP_WIDTH = 26;
         const MAP_HEIGHT = 26;
@@ -1435,17 +1508,27 @@
         const FORMAT_PREFIX = levelDataCodec.formatPrefix;
         const BACKGROUND_COLOR = '#000000';
         const MAP_BACKGROUND_COLOR = '#0d1013';
-        let gridColor = '#292d33';
-        let isGridVisible = false;
-        let areTileTexturesVisible = true;
-        let areCanvasModeControlsVisible = true;
-        let areMapZoomControlsVisible = true;
-        let isMapZoomInputVisible = true;
-        let areHitboxesVisible = false;
-        let isSlowMotionEnabled = false;
-        let isDebugEnabled = false;
-        let isEnemyDebugEnabled = false;
-        let areTouchControlsEnabled = false;
+        let gridColor = settingsApi.readPreference('gridColor', '#292d33');
+        let isGridVisible = settingsApi.readPreference('gridVisible', false);
+        let areTileTexturesVisible =
+            settingsApi.readPreference('tileTexturesVisible', true);
+        let areCanvasModeControlsVisible =
+            settingsApi.readPreference('canvasToolsVisible', true);
+        let areMapZoomControlsVisible =
+            settingsApi.readPreference('mapZoomControlsVisible', true);
+        let isMapZoomInputVisible =
+            settingsApi.readPreference('mapZoomInputVisible', true);
+        const isPlayMode = document.body.dataset.gameMode === 'play';
+        let areHitboxesVisible = !isPlayMode &&
+            settingsApi.readPreference('hitboxesVisible', false);
+        let isSlowMotionEnabled = !isPlayMode &&
+            settingsApi.readPreference('slowMotionEnabled', false);
+        let isDebugEnabled = !isPlayMode &&
+            settingsApi.readPreference('debugEnabled', false);
+        let isEnemyDebugEnabled = !isPlayMode &&
+            settingsApi.readPreference('enemyDebugEnabled', false);
+        let areTouchControlsEnabled =
+            settingsApi.readPreference('touchControlsEnabled', false);
         let playerTextureRow = 0;
         let playerTextureType = 'a';
         let playerTextureLoadVersion = 0;
@@ -1456,7 +1539,8 @@
         let coveredElementCellsCache = null;
         let coveredElementCellsCacheVersion = -1;
         let mapRenderVersion = 0;
-        let isTileNamesVisible = false;
+        const enemyPathGridCache = new Map();
+        let isTileNamesVisible = settingsApi.readTileNamesVisible();
         const PLAYER_COLOR = '#39ff68';
         const PLAYER_GUN_COLOR = '#b7ffc7';
         const SUB_TILES_PER_TILE = 4;
@@ -1475,7 +1559,9 @@
         const ENEMY_TANK_MAX_MOVE_TILES = 20;
         const ENEMY_TANK_STOP_CHANCE = 0.45;
         const ENEMY_TANK_PAUSE_SECONDS = 0.8;
+        const ENEMY_DIRECTION_CHANGE_COOLDOWN_MS = 300;
         const ENEMY_PATH_BLOCKED_RETRY_MS = 900;
+        const ENEMY_F_IDLE_FIRE_COOLDOWN_EXTRA_MS = 250;
         const ENEMY_TANK_SUBSTATES = ['Normal', 'Trapped'];
         const ENEMY_TANK_TRAPPED_SHOT_COOLDOWN_MIN_MS = 120;
         const ENEMY_TANK_TRAPPED_SHOT_COOLDOWN_MAX_MS = 220;
@@ -1588,7 +1674,7 @@
         const SHINE_CYCLE_FRAMES = SHINE_ACTIVE_FRAMES + SHINE_HOLD_FRAMES;
         const BULLET_FIRE_COOLDOWN_SECONDS = 0.15;
         const PLAYER_DEATH_RESPAWN_DELAY_MS = 100;
-        let slowMotionTimeScale = 0.3;
+        let slowMotionTimeScale = settingsApi.readPreference('slowMotionScale', 0.3);
         const LARGE_TILE_SIZE = 2;
         const TEXTURE_ANIMATION_FPS = 32;
         const TEXTURE_FRAME_DURATION = 1000 / TEXTURE_ANIMATION_FPS;
@@ -1648,6 +1734,13 @@
         const DENSE_BUSH_ID = 16;
         const COMPACT_ICE_ID = 17;
         const VERY_DENSE_BUSH_ID = 78;
+        const POWERUP_PLACEMENT_TILE_IDS = new Set([
+            AIR_ID,
+            SOLID_BLOCK_2_ID,
+            REINFORCED_BRICKS_ID,
+            ICE_ID,
+            COMPACT_ICE_ID
+        ]);
         const roadTileCatalog = window.BC90ERoadTiles;
         if (!roadTileCatalog) {
             throw new Error('The road tile catalog did not load.');
@@ -1813,12 +1906,14 @@
         const textureLoadStates = new Map();
         const failedTextureLoads = new Set();
         const loadedTextureCache = new Map();
+        let textureCacheWriteQueue = Promise.resolve();
         const textureLoadQueue = [];
         const activeTextureLoadCancels = new Set();
         const MAX_CONCURRENT_TEXTURE_LOADS = 16;
         let activeTextureLoadCount = 0;
         let pendingPackLaunch = null;
         let gameAssetPreparationAttempt = 0;
+        let gameAssetPreparationProgressInterval = 0;
 
         let mapWidth = MAP_WIDTH;
         let mapHeight = MAP_HEIGHT;
@@ -1848,6 +1943,7 @@
             getMapDimensions: () => ({ width: mapWidth, height: mapHeight }),
             isPanModeEnabled: () => isPanModeEnabled,
             syncCanvasModeControlSize,
+            settings: settingsApi,
             onBackingSizeChanged: () => {
                 baseLayerCache = null;
             }
@@ -1921,20 +2017,32 @@
         let areInitialSpawnsDeferred = false;
         const pressedKeys = new Set();
         const activeTouchDirections = new Map();
+        const activeTouchControlPointers = new Map();
         let touchFirePointerId = null;
         let touchFireIntervalId = null;
         const bullets = [];
         const explosions = [];
         const powerUpsOnMap = [];
+
+        function clearTouchControlState() {
+            activeTouchDirections.clear();
+            activeTouchControlPointers.clear();
+            touchFirePointerId = null;
+            if (touchFireIntervalId !== null) {
+                window.clearInterval(touchFireIntervalId);
+                touchFireIntervalId = null;
+            }
+            mobileGameControls.querySelectorAll('.is-pressed').forEach((button) => {
+                button.classList.remove('is-pressed');
+            });
+        }
         const tntBlockDetonations = new Map();
         let temporarySteelEffect = null;
         const destroyedEagleTiles = new Set();
-        const gameAudioContext = audioSystem.ensureAudioContext();
+        let gameAudioContext = audioSystem.ensureAudioContext();
         if (!gameAudioContext) {
             throw new Error('This browser does not support Web Audio.');
         }
-        let audioIdleTimeoutId = 0;
-        const AUDIO_IDLE_TIMEOUT_MS = 60000;
         const soundFiles = audioSystem.soundFiles;
         let startupAssetProgressPhase = 'textures';
         window.updateAssetProgress = function updateAssetProgress() {
@@ -1995,7 +2103,10 @@
         const MAX_PLAYER_LIVES = 3;
         const DEFAULT_MAX_ACTIVE_ENEMIES = 4;
         const MAX_ACTIVE_ENEMIES = 20;
+        const DEFAULT_MAX_ACTIVE_POWER_UPS = 1;
+        const MAX_ACTIVE_POWER_UPS = 999;
         let maxActiveEnemies = DEFAULT_MAX_ACTIVE_ENEMIES;
+        let maxActivePowerUps = DEFAULT_MAX_ACTIVE_POWER_UPS;
         let playerLives = MAX_PLAYER_LIVES;
         let defeatedEnemyCount = 0;
         const defeatedEnemiesByRank = Array(11).fill(0);
@@ -2091,6 +2202,21 @@
             maxActiveEnemiesInput.value = String(maxActiveEnemies);
         }
 
+        function getConfiguredMaxActivePowerUps() {
+            const value = Number.parseInt(maxActivePowerUpsInput.value, 10);
+            return Number.isInteger(value)
+                ? Math.min(MAX_ACTIVE_POWER_UPS, Math.max(1, value))
+                : DEFAULT_MAX_ACTIVE_POWER_UPS;
+        }
+
+        function setConfiguredMaxActivePowerUps(value) {
+            maxActivePowerUps = Math.min(
+                MAX_ACTIVE_POWER_UPS,
+                Math.max(1, Number(value) || DEFAULT_MAX_ACTIVE_POWER_UPS)
+            );
+            maxActivePowerUpsInput.value = String(maxActivePowerUps);
+        }
+
         function loadSoundBuffer(name) {
             return audioSystem.loadSoundBuffer(name);
         }
@@ -2129,6 +2255,7 @@
         }
 
         function flushPendingSoundEffects() {
+            refreshGameAudioContext();
             if (areGameSoundsMuted || document.hidden) {
                 pendingSoundEffects.length = 0;
                 return;
@@ -2162,6 +2289,7 @@
         }
 
         function playSoundEffect(effect) {
+            refreshGameAudioContext();
             if (areGameSoundsMuted || document.hidden) {
                 return;
             }
@@ -2192,36 +2320,6 @@
             audioSystem.stopAudioKeepAlive();
         }
 
-        function scheduleAudioIdleSuspension() {
-            window.clearTimeout(audioIdleTimeoutId);
-            audioIdleTimeoutId = window.setTimeout(() => {
-                audioIdleTimeoutId = 0;
-                if (
-                    pressedKeys.size > 0 ||
-                    activeTouchDirections.size > 0 ||
-                    touchFirePointerId !== null
-                ) {
-                    scheduleAudioIdleSuspension();
-                    return;
-                }
-
-                if (isSimulationActive && !document.hidden) {
-                    scheduleAudioIdleSuspension();
-                    return;
-                }
-
-                pendingSoundEffects.length = 0;
-                stopMovementAudio();
-                stopAllSoundSources();
-                stopAudioKeepAlive();
-                if (gameAudioContext.state === 'running') {
-                    void audioSystem.suspendGameAudio().catch((error) => {
-                        console.error('Unable to suspend idle game audio.', error);
-                    });
-                }
-            }, AUDIO_IDLE_TIMEOUT_MS);
-        }
-
         function stopAllSoundSources(sourceToKeep = null) {
             audioSystem.stopAllSoundSources(sourceToKeep);
         }
@@ -2233,8 +2331,10 @@
             Player.isMoving = false;
         }
 
-        async function warmUpGameAudio() {
-            await audioSystem.warmUpGameAudio();
+        async function warmUpGameAudio(options = {}) {
+            await audioSystem.warmUpGameAudio(options);
+            refreshGameAudioContext();
+            startAudioKeepAlive();
         }
 
         function setGameOver(soundSourceToKeep = null, reason = 'lives') {
@@ -2336,7 +2436,9 @@
 
         function showAudioLoadingScreen() {
             const attempt = ++gameAssetPreparationAttempt;
+            window.clearInterval(gameAssetPreparationProgressInterval);
             const progressInterval = window.setInterval(window.updateAssetProgress, 100);
+            gameAssetPreparationProgressInterval = progressInterval;
             audioLoadingScreenShown = true;
             audioLoadingDialog.classList.add('visible');
             audioAssetReport.hidden = true;
@@ -2345,6 +2447,7 @@
             startLoadedLevelButton.hidden = true;
             startLoadedLevelButton.textContent = 'Start Level';
             startMutedLevelButton.hidden = true;
+            retryAudioLoadingButton.hidden = true;
             retryGameAssetsButton.hidden = true;
             audioLoadingTitle.textContent = 'Preparing level';
             window.updateAssetProgress();
@@ -2370,6 +2473,7 @@
                     renderAssetDiagnosticReport(audioAssetReport);
                     startLoadedLevelButton.hidden = true;
                     startMutedLevelButton.textContent = 'Start without audio';
+                    retryAudioLoadingButton.hidden = false;
                     return;
                 }
                 audioAssetReport.hidden = true;
@@ -2379,6 +2483,7 @@
                 startLoadedLevelButton.hidden = false;
                 startLoadedLevelButton.disabled = false;
                 startMutedLevelButton.textContent = 'Start without audio';
+                retryAudioLoadingButton.hidden = true;
             }).catch((error) => {
                 if (attempt !== gameAssetPreparationAttempt) {
                     return;
@@ -2392,7 +2497,22 @@
                 retryGameAssetsButton.hidden = false;
             }).finally(() => {
                 window.clearInterval(progressInterval);
+                if (gameAssetPreparationProgressInterval === progressInterval) {
+                    gameAssetPreparationProgressInterval = 0;
+                }
             });
+        }
+
+        function cancelGameAssetPreparation() {
+            if (!audioLoadingDialog.classList.contains('visible')) {
+                return;
+            }
+            gameAssetPreparationAttempt += 1;
+            window.clearInterval(gameAssetPreparationProgressInterval);
+            gameAssetPreparationProgressInterval = 0;
+            audioLoadingScreenShown = false;
+            pendingPackLaunch = null;
+            audioLoadingDialog.classList.remove('visible');
         }
 
         function stopMovementAudio() {
@@ -2441,6 +2561,7 @@
         }
 
         function startMovementAudioWithBuffer(name, generation, buffer) {
+            refreshGameAudioContext();
             if (generation !== movementAudioGeneration || !isSimulationActive) {
                 return;
             }
@@ -2499,11 +2620,14 @@
             }
         }
 
-        gameAudioContext.addEventListener('statechange', () => {
+        function handleGameAudioContextStateChange() {
             if (gameAudioContext.state !== 'running') {
                 pendingSoundEffects.length = 0;
                 stopMovementAudio();
                 stopAllSoundSources();
+                if (gameAudioContext.state === 'closed') {
+                    refreshGameAudioContext();
+                }
                 return;
             }
 
@@ -2521,23 +2645,44 @@
                 updateMovementAudio();
             }
             flushPendingSoundEffects();
-        });
+        }
 
-        function resumeGameAudio() {
+        gameAudioContext.addEventListener('statechange', handleGameAudioContextStateChange);
+
+        function refreshGameAudioContext() {
+            const currentAudioContext = audioSystem.ensureAudioContext();
+            if (!currentAudioContext) {
+                throw new Error('This browser does not support Web Audio.');
+            }
+            if (currentAudioContext !== gameAudioContext) {
+                pendingSoundEffects.length = 0;
+                stopMovementAudio();
+                stopAllSoundSources();
+                gameAudioContext = currentAudioContext;
+                gameAudioContext.addEventListener(
+                    'statechange',
+                    handleGameAudioContextStateChange
+                );
+            }
+            return gameAudioContext;
+        }
+
+        function resumeGameAudio({ fromUserGesture = false } = {}) {
+            refreshGameAudioContext();
             const restoreAudio = () => {
+                refreshGameAudioContext();
                 startAudioKeepAlive();
                 flushPendingSoundEffects();
                 if (isSimulationActive && !isGameOver) {
                     updateMovementAudio();
                 }
-                scheduleAudioIdleSuspension();
             };
-            if (gameAudioContext.state === 'running') {
+            if (gameAudioContext.state === 'running' && !fromUserGesture) {
                 restoreAudio();
                 return Promise.resolve();
             }
 
-            return audioSystem.resumeGameAudio().then(restoreAudio);
+            return audioSystem.resumeGameAudio({ fromUserGesture }).then(restoreAudio);
         }
 
         function tryResumeGameAudioOnReturn() {
@@ -2557,8 +2702,6 @@
 
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-                window.clearTimeout(audioIdleTimeoutId);
-                audioIdleTimeoutId = 0;
                 pendingSoundEffects.length = 0;
                 stopMovementAudio();
                 stopAllSoundSources();
@@ -2581,19 +2724,14 @@
             if (event.target instanceof Element && !event.target.closest('#gameCanvas, #mobileGameControls, [data-game-direction], [data-game-fire]')) {
                 clearGameInputState();
             }
-            void resumeGameAudio().catch((error) => {
+            void resumeGameAudio({ fromUserGesture: true }).catch((error) => {
                 console.error('Unable to resume game audio after user interaction.', error);
             });
         }, true);
         document.addEventListener('keydown', () => {
-            void resumeGameAudio().catch((error) => {
+            void resumeGameAudio({ fromUserGesture: true }).catch((error) => {
                 console.error('Unable to resume game audio after user interaction.', error);
             });
-        }, true);
-        document.addEventListener('pointermove', () => {
-            if (gameAudioContext.state === 'running') {
-                scheduleAudioIdleSuspension();
-            }
         }, true);
 
         function getTankSpeedMultiplierForType(type, textureType = playerTextureType) {
@@ -2746,8 +2884,25 @@
             return getTankTwinShotEnabled(getEnemyTankType(enemy));
         }
 
-        function getEnemyFireCooldownMs(enemy) {
-            return gameCore.getEnemyFireCooldownMs(enemy, getEnemyTankType(enemy));
+        function getEnemyFireCooldownMs(enemy, direction = enemy?.direction ?? 'UP') {
+            const cooldown = gameCore.getEnemyFireCooldownMs(
+                enemy,
+                getEnemyTankType(enemy)
+            );
+            if (
+                enemy?.textureType !== 'f' ||
+                enemy.substate === 'Trapped' ||
+                BRICK_TILE_IDS.has(getEnemyBlockingTileId(
+                    enemy,
+                    enemy.x,
+                    enemy.y,
+                    direction
+                ))
+            ) {
+                return cooldown;
+            }
+
+            return cooldown + ENEMY_F_IDLE_FIRE_COOLDOWN_EXTRA_MS;
         }
 
         let requestedDirection = null;
@@ -3009,11 +3164,23 @@
                         return;
                     }
 
-                    void createTextureCacheValue(texture).then(async (cacheValue) => {
-                        if (cacheValue && requestVersion === assetReloadVersion && !isSettled) {
-                            await cacheResetPromise;
+                    textureCacheWriteQueue = textureCacheWriteQueue.then(async () => {
+                        if (requestVersion !== assetReloadVersion) {
+                            return;
                         }
-                        if (cacheValue && requestVersion === assetReloadVersion && !isSettled) {
+                        await cacheResetPromise;
+                        if (requestVersion !== assetReloadVersion) {
+                            return;
+                        }
+                        const cacheValue = await createTextureCacheValue(texture);
+                        if (!cacheValue || requestVersion !== assetReloadVersion) {
+                            if (typeof ImageBitmap === 'function' &&
+                                cacheValue instanceof ImageBitmap) {
+                                cacheValue.close();
+                            }
+                            return;
+                        }
+                        try {
                             const didCache = await persistentAssetCache.put(
                                 persistentCacheKey,
                                 cacheValue
@@ -3030,16 +3197,16 @@
                                     );
                                 }
                             }
+                        } finally {
+                            if (typeof ImageBitmap === 'function' &&
+                                cacheValue instanceof ImageBitmap) {
+                                cacheValue.close();
+                            }
                         }
-                        if (typeof ImageBitmap === 'function' &&
-                            cacheValue instanceof ImageBitmap) {
-                            cacheValue.close();
-                        }
-                        settleLoad();
                     }).catch((error) => {
                         console.warn(`Could not persist game texture "${path}".`, error);
-                        settleLoad();
                     });
+                    settleLoad();
                     return;
                 }
 
@@ -3966,6 +4133,10 @@
         }
 
         function dropEnemyPowerUp(enemy) {
+            if (powerUpsOnMap.length >= maxActivePowerUps) {
+                return false;
+            }
+
             const availablePowerUpIds = (enemy.powerUps ?? []).filter(
                 (powerUpId) => Number.isInteger(powerUpId) &&
                     powerUpId >= 0 && powerUpId < powerUpTextures.length
@@ -3979,13 +4150,13 @@
 
             for (let row = 0; row <= mapHeight - 2; row += 1) {
                 for (let column = 0; column <= mapWidth - 2; column += 1) {
-                    const isClearFootprint = [
+                    const hasAllowedFootprint = [
                         mapGrid[row]?.[column],
                         mapGrid[row]?.[column + 1],
                         mapGrid[row + 1]?.[column],
                         mapGrid[row + 1]?.[column + 1]
-                    ].every((tileId) => tileId === AIR_ID);
-                    if (!isClearFootprint) {
+                    ].every((tileId) => POWERUP_PLACEMENT_TILE_IDS.has(tileId));
+                    if (!hasAllowedFootprint) {
                         continue;
                     }
 
@@ -4188,17 +4359,34 @@
                     tankY - dimensions.height / 2 < blast.top + blast.height;
             };
             for (const target of [...enemyTanks]) {
-                if (
-                    target.textureType !== 'f' &&
-                    overlapsBlast(target.x, target.y)
-                ) {
-                    defeatEnemy(target, shouldDropPowerUps, true);
+                if (!overlapsBlast(target.x, target.y)) {
+                    continue;
                 }
+
+                if (target.textureType === 'c') {
+                    const hitPointsBeforeDamage = target.hitPoints
+                        ?? getEnemyInitialHitPoints(target.textureType);
+                    target.hitPoints = Math.max(0, hitPointsBeforeDamage - 3);
+                    if (target.hitPoints > 0) {
+                        target.visualTextureType = getEnemyDamagedTextureType(
+                            target.hitPoints
+                        );
+                        if (
+                            shouldDropPowerUps &&
+                            (target.powerUps?.length ?? 0) > 0 &&
+                            dropEnemyPowerUp(target)
+                        ) {
+                            target.powerUps = [];
+                        }
+                        continue;
+                    }
+                }
+
+                defeatEnemy(target, shouldDropPowerUps, true);
             }
 
             if (
                 !isPlayerDead &&
-                playerTextureType !== 'f' &&
                 shouldDrawPlayerAfterSpawn &&
                 overlapsBlast(Player.x, Player.y)
             ) {
@@ -4519,6 +4707,10 @@
             }
         }
 
+        function defeatAllActiveEnemies() {
+            [...enemyTanks].forEach((enemy) => defeatEnemy(enemy, false));
+        }
+
         function applyPowerUp(powerUpId) {
             if (powerUpId === 0) {
                 playerInvincibleUntil = Math.max(playerInvincibleUntil, gameTime + 5000);
@@ -4527,7 +4719,7 @@
             } else if (powerUpId === 2) {
                 createTemporarySteel();
             } else if (powerUpId === 4) {
-                [...enemyTanks].forEach((enemy) => defeatEnemy(enemy, false));
+                defeatAllActiveEnemies();
             } else if (powerUpId === 5) {
                 playerLives = Math.min(999, playerLives + 1);
                 updatePlayerLivesDisplay();
@@ -5020,9 +5212,12 @@
 
             const horizontalDistance = Math.abs(candidate.x - enemy.x);
             const verticalDistance = Math.abs(candidate.y - enemy.y);
-            enemy.direction = horizontalDistance >= verticalDistance
+            const repositionDirection = horizontalDistance >= verticalDistance
                 ? candidate.x < enemy.x ? 'LEFT' : 'RIGHT'
                 : candidate.y < enemy.y ? 'UP' : 'DOWN';
+            if (!setEnemyDirection(enemy, repositionDirection)) {
+                return false;
+            }
             clearEnemySliding(enemy);
             enemy.pauseUntil = 0;
             enemy.substate = 'Normal';
@@ -6775,17 +6970,19 @@
             return frames[frame] ?? frames[0];
         }
 
-        function getEnemyTargetPosition(enemy) {
-            const playerCenter = {
-                x: Player.x,
-                y: Player.y
-            };
+        function getActiveEnemyEagles() {
             const eagles = [];
+            const tileDimensions = getTileDimensions();
             for (let row = 0; row < mapHeight; row += 1) {
                 for (let column = 0; column < mapWidth; column += 1) {
-                    if (mapGrid[row]?.[column] === EAGLE_ID) {
-                        const tileDimensions = getTileDimensions();
+                    const eagleKey = `${row},${column}`;
+                    if (
+                        mapGrid[row]?.[column] === EAGLE_ID &&
+                        !destroyedEagleTiles.has(eagleKey)
+                    ) {
                         eagles.push({
+                            row,
+                            column,
                             x: (column + 0.5) * tileDimensions.width,
                             y: (row + 0.5) * tileDimensions.height
                         });
@@ -6793,7 +6990,16 @@
                 }
             }
 
-            const candidates = [{ x: playerCenter.x, y: playerCenter.y, weight: 1.2 }];
+            return eagles;
+        }
+
+        function getEnemyTargetPosition(enemy) {
+            const candidates = [{
+                x: Player.x,
+                y: Player.y,
+                weight: 1.2
+            }];
+            const eagles = getActiveEnemyEagles();
             if (eagles.length > 0) {
                 candidates.push(...eagles.map((eagle) => ({
                     x: eagle.x,
@@ -6820,25 +7026,22 @@
         }
 
         function getEnemyEagleTarget(enemy) {
-            const eagles = [];
-
-            for (let row = 0; row < mapHeight; row += 1) {
-                for (let column = 0; column < mapWidth; column += 1) {
-                    if (mapGrid[row]?.[column] === EAGLE_ID) {
-                        const tileDimensions = getTileDimensions();
-                        eagles.push({
-                            x: (column + 0.5) * tileDimensions.width,
-                            y: (row + 0.5) * tileDimensions.height
-                        });
-                    }
-                }
-            }
-
+            const eagles = getActiveEnemyEagles();
             if (eagles.length === 0) {
                 return { x: Player.x, y: Player.y };
             }
 
-            return eagles[Math.floor(Math.random() * eagles.length)];
+            return eagles.reduce((nearest, eagle) => {
+                const eagleDistance = Math.hypot(
+                    eagle.x - enemy.physicsX,
+                    eagle.y - enemy.physicsY
+                );
+                const nearestDistance = Math.hypot(
+                    nearest.x - enemy.physicsX,
+                    nearest.y - enemy.physicsY
+                );
+                return eagleDistance < nearestDistance ? eagle : nearest;
+            });
         }
 
         function getEnemyAiTarget(enemy) {
@@ -6870,7 +7073,9 @@
                 enemy.aiState = gameCore.getNextEnemyAiState(enemy);
                 enemy.aiStateUntil = gameTime + getEnemyAiStateDurationMs(enemy.aiState);
                 enemy.pathBlockedSteps?.clear();
-                enemy.pathRouteCache = null;
+                if (!enemy.slidingDirection) {
+                    enemy.pathRouteCache = null;
+                }
                 enemy.fireCooldownUntil = gameTime;
                 return;
             }
@@ -6882,7 +7087,9 @@
                     enemy.textureType
                 );
                 enemy.pathBlockedSteps?.clear();
-                enemy.pathRouteCache = null;
+                if (!enemy.slidingDirection) {
+                    enemy.pathRouteCache = null;
+                }
                 if (enemy.aiState !== 'random') {
                     enemy.fireCooldownUntil = gameTime;
                 }
@@ -6901,120 +7108,123 @@
             return element?.tileId ?? mapGrid[row]?.[column] ?? null;
         }
 
-        function getEnemyPathPreferenceCost(row, column) {
-            const tileId = getEnemyPathTileId(row, column);
-
-            if (ROAD_TILE_IDS.has(tileId)) {
-                return 0.15;
-            }
-            if (tileId === VERY_DENSE_BUSH_ID) {
-                return 2000;
-            }
-            if (tileId === DENSE_BUSH_ID) {
-                return 1000;
-            }
-            if (tileId === AIR_ID) {
-                return 1;
-            }
-            if (tileId === BUSH_ID) {
-                return 0.75;
-            }
-            if (tileId === SOLID_BLOCK_2_ID) {
-                return 2;
-            }
-            if (tileId === REINFORCED_BRICKS_ID) {
-                return 3;
-            }
-            if (tileId === ICE_ID || tileId === COMPACT_ICE_ID) {
-                return 4;
-            }
-            return 2;
-        }
-
-        function isEnemyPathTileWalkable(row, column) {
-            if (row < 0 || row >= mapHeight || column < 0 || column >= mapWidth) {
-                return false;
+        function getEnemyPathGridCache(enemy) {
+            const canPathThroughSteel = ['e', 'f'].includes(enemy.textureType) &&
+                [3, 10].includes(getEnemyTankType(enemy));
+            const cachedGrid = enemyPathGridCache.get(canPathThroughSteel);
+            if (
+                cachedGrid?.mapVersion === mapRenderVersion &&
+                cachedGrid.width === mapWidth &&
+                cachedGrid.height === mapHeight
+            ) {
+                return cachedGrid;
             }
 
-            const tileId = getEnemyPathTileId(row, column);
-            return tileId === null ||
-                !isSolidTile(tileId) ||
-                BRICK_TILE_IDS.has(tileId);
-        }
+            const size = mapWidth * mapHeight;
+            const walkable = new Uint8Array(size);
+            const iceTypes = new Array(size).fill(null);
+            const movementCosts = new Float32Array(size);
 
-        function isEnemyPathPositionWalkable(row, column) {
-            for (let footprintRow = row; footprintRow < row + 2; footprintRow += 1) {
-                for (
-                    let footprintColumn = column;
-                    footprintColumn < column + 2;
-                    footprintColumn += 1
-                ) {
-                    if (!isEnemyPathTileWalkable(footprintRow, footprintColumn)) {
-                        return false;
-                    }
-                }
-            }
-
-            return true;
-        }
-
-        function getEnemyPathPositionPreferenceCost(row, column) {
-            let totalCost = 0;
-            let roadCenterOffset = Infinity;
-            const tankCenterX = column + 1;
-            const tankCenterY = row + 1;
-            const checkedRoads = new Set();
-
-            for (let footprintRow = row; footprintRow < row + 2; footprintRow += 1) {
-                for (
-                    let footprintColumn = column;
-                    footprintColumn < column + 2;
-                    footprintColumn += 1
-                ) {
-                    totalCost += getEnemyPathPreferenceCost(footprintRow, footprintColumn);
-                    const road = getElementAnchor(footprintRow, footprintColumn);
-                    if (!road || !ROAD_TILE_IDS.has(road.tileId)) {
+            for (let row = 0; row < mapHeight; row += 1) {
+                for (let column = 0; column < mapWidth; column += 1) {
+                    const index = row * mapWidth + column;
+                    if (row + 1 >= mapHeight || column + 1 >= mapWidth) {
                         continue;
                     }
 
-                    const roadKey = `${road.row},${road.column},${road.tileId}`;
-                    if (checkedRoads.has(roadKey)) {
-                        continue;
+                    let isWalkable = true;
+                    let touchesIce = false;
+                    let touchesCompactIce = false;
+                    let touchesVeryDenseBush = false;
+                    let touchesDenseBush = false;
+                    let touchesRoad = false;
+                    for (let footprintRow = row; footprintRow < row + 2; footprintRow += 1) {
+                        for (
+                            let footprintColumn = column;
+                            footprintColumn < column + 2;
+                            footprintColumn += 1
+                        ) {
+                            const tileId = getEnemyPathTileId(
+                                footprintRow,
+                                footprintColumn
+                            );
+                            if (
+                                tileId !== null &&
+                                isSolidTile(tileId) &&
+                                !BRICK_TILE_IDS.has(tileId) &&
+                                !(canPathThroughSteel && tileId === SOLID_BLOCK_ID)
+                            ) {
+                                isWalkable = false;
+                            }
+                            if (tileId === COMPACT_ICE_ID) {
+                                touchesCompactIce = true;
+                            } else if (tileId === ICE_ID) {
+                                touchesIce = true;
+                            }
+                            touchesVeryDenseBush ||= tileId === VERY_DENSE_BUSH_ID;
+                            touchesDenseBush ||= tileId === DENSE_BUSH_ID;
+                            touchesRoad ||= ROAD_TILE_IDS.has(tileId);
+                        }
                     }
-                    checkedRoads.add(roadKey);
 
-                    const roadSize = getElementFootprintSize(road.tileId);
-                    const roadCenterX = road.column + roadSize.width / 2;
-                    const roadCenterY = road.row + roadSize.height / 2;
-                    const centerOffset = roadSize.width === roadSize.height
-                        ? Math.hypot(tankCenterX - roadCenterX, tankCenterY - roadCenterY)
-                        : roadSize.width > roadSize.height
-                            ? Math.abs(tankCenterY - roadCenterY)
-                            : Math.abs(tankCenterX - roadCenterX);
-                    roadCenterOffset = Math.min(roadCenterOffset, centerOffset);
+                    const speedFactor = gameCore.getTankTerrainSpeedMultiplier(
+                        touchesVeryDenseBush,
+                        touchesDenseBush,
+                        touchesRoad
+                    );
+                    walkable[index] = isWalkable ? 1 : 0;
+                    iceTypes[index] = touchesCompactIce
+                        ? 'compact'
+                        : touchesIce ? 'normal' : null;
+                    movementCosts[index] = SUB_TILES_PER_TILE / speedFactor;
                 }
             }
 
-            return totalCost / 4 + (Number.isFinite(roadCenterOffset)
-                ? roadCenterOffset * 0.5
-                : 0);
+            const pathGrid = {
+                mapVersion: mapRenderVersion,
+                width: mapWidth,
+                height: mapHeight,
+                canPathThroughSteel,
+                walkable,
+                iceTypes,
+                movementCosts
+            };
+            enemyPathGridCache.set(canPathThroughSteel, pathGrid);
+            return pathGrid;
         }
 
-        function getEnemyPathTargetKey(enemy, tileDimensions) {
-            if (enemy.aiState === 'escape') {
+        function getEnemyPathAiState(enemy) {
+            let aiState = enemy.textureType === 'f' && enemy.aiState === 'random'
+                ? enemy.primaryAiState ?? 'eagle'
+                : enemy.aiState;
+
+            if (
+                aiState === 'eagle' &&
+                (tileCounters[EAGLE_ID] ?? 0) <= destroyedEagleTiles.size
+            ) {
+                aiState = 'player';
+            }
+
+            return aiState;
+        }
+
+        function getEnemyPathTargetKey(enemy, tileDimensions, aiState) {
+            if (aiState === 'escape') {
                 const row = Math.floor(Player.y / tileDimensions.height);
                 const column = Math.floor(Player.x / tileDimensions.width);
                 return `escape:${row},${column}`;
             }
-            if (enemy.aiState === 'player') {
-                const row = Math.floor(Player.y / tileDimensions.height);
-                const column = Math.floor(Player.x / tileDimensions.width);
+            if (aiState === 'player') {
+                const row = Math.round(Player.y / tileDimensions.height) - 1;
+                const column = Math.round(Player.x / tileDimensions.width) - 1;
                 return `player:${row},${column}`;
             }
-            return 'eagle';
+            return `eagle:${getActiveEnemyEagles()
+                .map((eagle) => `${eagle.row},${eagle.column}`)
+                .join('|')}`;
         }
 
-        function getEnemyPathDirection(enemy) {
+        function getEnemyPathDirection(enemy, aiState = getEnemyPathAiState(enemy)) {
             const tileDimensions = getTileDimensions();
             const startRow = Math.round(enemy.physicsY / tileDimensions.height) - 1;
             const startColumn = Math.round(enemy.physicsX / tileDimensions.width) - 1;
@@ -7022,57 +7232,126 @@
             const height = mapHeight;
             const startIndex = startRow * width + startColumn;
             const nodeCount = width * height;
-            const targetKey = getEnemyPathTargetKey(enemy, tileDimensions);
+            const targetKey = getEnemyPathTargetKey(enemy, tileDimensions, aiState);
             const cachedRoute = enemy.pathRouteCache;
-
-            if (
-                cachedRoute &&
-                cachedRoute.mapVersion === mapRenderVersion &&
-                cachedRoute.targetKey === targetKey &&
-                cachedRoute.aiState === enemy.aiState
-            ) {
-                if (cachedRoute.steps.has(startIndex)) {
-                    return cachedRoute.steps.get(startIndex);
-                }
-            }
 
             if (
                 startRow < 0 || startRow >= height ||
                 startColumn < 0 || startColumn >= width
             ) {
+                enemy.pathRouteCache = null;
                 return null;
             }
 
-            const targetCells = enemy.aiState === 'player'
+            const pathGrid = getEnemyPathGridCache(enemy);
+            const directions = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+            const directionIndexes = new Map(
+                directions.map((direction, index) => [direction, index])
+            );
+            const getGraphStateId = (positionIndex, direction) =>
+                positionIndex * directions.length + directionIndexes.get(direction);
+            const getRouteStateKey = (
+                positionIndex,
+                direction,
+                slideMode,
+                slideDistance = 0
+            ) => [
+                positionIndex,
+                directionIndexes.get(direction),
+                slideMode ?? 'none',
+                slideMode === 'normal'
+                    ? Math.floor(slideDistance + 1e-6)
+                    : 0
+            ].join(':');
+            const isPathPositionWalkable = (row, column) => (
+                row >= 0 &&
+                row < height &&
+                column >= 0 &&
+                column < width &&
+                pathGrid.walkable[row * width + column] === 1
+            );
+            const getPathPositionIceType = (row, column) =>
+                pathGrid.iceTypes[row * width + column] ?? null;
+            const getPathPositionMovementCost = (row, column) =>
+                pathGrid.movementCosts[row * width + column];
+            const isCachedStepCompatible = (step) => {
+                const actualSlideMode = enemy.slidingDirection
+                    ? enemy.slidingOnCompactIce ? 'compact' : 'normal'
+                    : null;
+                const expectedSlideMode = step?.expectedSlideMode ?? null;
+                return actualSlideMode === expectedSlideMode &&
+                    (actualSlideMode === null ||
+                        enemy.slidingDirection === step?.expectedSlideDirection) &&
+                    (actualSlideMode !== 'normal' ||
+                        Math.floor((enemy.slidingDistance ?? 0) + 1e-6) ===
+                            Math.floor((step?.expectedSlideDistance ?? 0) + 1e-6));
+            };
+            const actualSlideMode = enemy.slidingDirection
+                ? enemy.slidingOnCompactIce ? 'compact' : 'normal'
+                : null;
+            const startDirection = enemy.slidingDirection ?? enemy.direction ?? 'UP';
+            const startRouteKey = getRouteStateKey(
+                startIndex,
+                startDirection,
+                actualSlideMode,
+                enemy.slidingDistance ?? 0
+            );
+
+            if (actualSlideMode !== null) {
+                if (
+                    cachedRoute &&
+                    cachedRoute.steps.has(startRouteKey)
+                ) {
+                    const cachedStep = cachedRoute.steps.get(startRouteKey);
+                    if (isCachedStepCompatible(cachedStep)) {
+                        return cachedStep;
+                    }
+                }
+                return null;
+            }
+
+            if (
+                cachedRoute &&
+                cachedRoute.mapVersion === mapRenderVersion &&
+                cachedRoute.targetKey === targetKey &&
+                cachedRoute.aiState === aiState &&
+                cachedRoute.steps.has(startRouteKey)
+            ) {
+                const cachedStep = cachedRoute.steps.get(startRouteKey);
+                if (isCachedStepCompatible(cachedStep)) {
+                    return cachedStep;
+                }
+            }
+            const targetCells = aiState === 'player'
                 ? [{
                     kind: 'player',
-                    cells: [{
-                        row: Math.floor(Player.y / tileDimensions.height),
-                        column: Math.floor(Player.x / tileDimensions.width)
-                    }]
+                    cells: getElementFootprint(
+                        Math.round(Player.y / tileDimensions.height) - 1,
+                        Math.round(Player.x / tileDimensions.width) - 1,
+                        EAGLE_ID
+                    )
                 }]
                 : [];
-            if (enemy.aiState !== 'player') {
-                if (enemy.aiState === 'eagle') {
-                    for (let row = 0; row < height; row += 1) {
-                        for (let column = 0; column < width; column += 1) {
-                            if (mapGrid[row][column] === EAGLE_ID) {
-                                targetCells.push({
-                                    kind: 'eagle',
-                                    cells: getElementFootprint(row, column, EAGLE_ID)
-                                });
-                            }
-                        }
-                    }
+            if (aiState !== 'player') {
+                if (aiState === 'eagle') {
+                    targetCells.push(...getActiveEnemyEagles().map((eagle) => ({
+                        kind: 'eagle',
+                        cells: getElementFootprint(
+                            eagle.row,
+                            eagle.column,
+                            EAGLE_ID
+                        )
+                    })));
                 }
             }
 
-            if (targetCells.length === 0 && enemy.aiState !== 'escape') {
+            if (targetCells.length === 0 && aiState !== 'escape') {
+                enemy.pathRouteCache = null;
                 return null;
             }
 
             const goalTargets = new Map();
-            if (enemy.aiState === 'escape') {
+            if (aiState === 'escape') {
                 const playerRow = Math.floor(Player.y / tileDimensions.height);
                 const playerColumn = Math.floor(Player.x / tileDimensions.width);
                 let farthestDistance = -Infinity;
@@ -7080,7 +7359,7 @@
 
                 for (let row = 0; row < height; row += 1) {
                     for (let column = 0; column < width; column += 1) {
-                        if (!isEnemyPathPositionWalkable(row, column)) {
+                        if (!isPathPositionWalkable(row, column)) {
                             continue;
                         }
                         const distance = Math.abs(row + 1 - (playerRow + 1)) +
@@ -7132,7 +7411,7 @@
                 ];
 
                 approachPositions.forEach((position) => {
-                    if (isEnemyPathPositionWalkable(position.row, position.column)) {
+                    if (isPathPositionWalkable(position.row, position.column)) {
                         const goalIndex = position.row * width + position.column;
                         if (!goalTargets.has(goalIndex)) {
                             goalTargets.set(goalIndex, {
@@ -7145,6 +7424,7 @@
             });
 
             if (goalTargets.size === 0) {
+                enemy.pathRouteCache = null;
                 return null;
             }
 
@@ -7157,20 +7437,156 @@
                 }
             }
 
+            const initialSlideMode = enemy.slidingDirection
+                ? enemy.slidingOnCompactIce ? 'compact' : 'normal'
+                : null;
+            const initialSlideDistance = initialSlideMode === 'normal'
+                ? enemy.slidingDistance ?? 0
+                : 0;
             const getNeighbors = (index) => {
                 const row = Math.floor(index / width);
                 const column = index % width;
-                return [
-                    { row: row - 1, column, direction: 'UP' },
-                    { row: row + 1, column, direction: 'DOWN' },
-                    { row, column: column - 1, direction: 'LEFT' },
-                    { row, column: column + 1, direction: 'RIGHT' }
-                ];
+                return {
+                    UP: { row: row - 1, column },
+                    RIGHT: { row, column: column + 1 },
+                    DOWN: { row: row + 1, column },
+                    LEFT: { row, column: column - 1 }
+                };
+            };
+            const tracePathSegment = (startRow, startColumn, direction, slideMode, slideDistance) => {
+                const cells = [];
+                let row = startRow;
+                let column = startColumn;
+                let currentSlideMode = slideMode;
+                let currentSlideDistance = slideDistance;
+                let blockedByObstacle = false;
+                let stoppedByMapObstacle = false;
+                let stoppingTileId = null;
+
+                for (let step = 0; step < Math.max(width, height) + 5; step += 1) {
+                    const blockedKey = `${row},${column}:${direction}`;
+                    if ((blockedSteps.get(blockedKey) ?? 0) > now) {
+                        blockedByObstacle = true;
+                        break;
+                    }
+
+                    const next = getNeighbors(row * width + column)[direction];
+                    if (!isPathPositionWalkable(next.row, next.column)) {
+                        blockedByObstacle = true;
+                        stoppedByMapObstacle = true;
+                        for (
+                            let footprintRow = next.row;
+                            footprintRow < next.row + 2 && stoppingTileId === null;
+                            footprintRow += 1
+                        ) {
+                            for (
+                                let footprintColumn = next.column;
+                                footprintColumn < next.column + 2;
+                                footprintColumn += 1
+                            ) {
+                                const tileId = getEnemyPathTileId(
+                                    footprintRow,
+                                    footprintColumn
+                                );
+                                if (
+                                    tileId !== null &&
+                                    isSolidTile(tileId) &&
+                                    !BRICK_TILE_IDS.has(tileId) &&
+                                    !(pathGrid.canPathThroughSteel &&
+                                        tileId === SOLID_BLOCK_ID)
+                                ) {
+                                    stoppingTileId = tileId;
+                                    break;
+                                }
+                            }
+                        }
+                        break;
+                    }
+
+                    row = next.row;
+                    column = next.column;
+                    const iceType = getPathPositionIceType(row, column);
+
+                    if (currentSlideMode === 'compact') {
+                        if (iceType === 'compact') {
+                            currentSlideDistance = 0;
+                        } else if (iceType === 'normal') {
+                            currentSlideMode = 'normal';
+                            currentSlideDistance = 0;
+                        } else {
+                            currentSlideMode = null;
+                            currentSlideDistance = 0;
+                        }
+                    } else if (currentSlideMode === 'normal') {
+                        if (iceType === 'compact') {
+                            currentSlideMode = 'compact';
+                            currentSlideDistance = 0;
+                        } else if (iceType === 'normal') {
+                            currentSlideDistance += 1;
+                            if (currentSlideDistance >= ICE_SLIDE_DISTANCE_TILES) {
+                                currentSlideMode = null;
+                                currentSlideDistance = 0;
+                            }
+                        } else {
+                            currentSlideMode = null;
+                            currentSlideDistance = 0;
+                        }
+                    } else if (iceType === 'compact') {
+                        currentSlideMode = 'compact';
+                        currentSlideDistance = 0;
+                    } else if (iceType === 'normal') {
+                        currentSlideMode = 'normal';
+                        currentSlideDistance = 0;
+                    }
+
+                    cells.push({
+                        row,
+                        column,
+                        index: row * width + column,
+                        slideMode: currentSlideMode,
+                        slideDistance: currentSlideDistance,
+                        stopSlideMode: null,
+                        stopTileId: null
+                    });
+
+                    if (currentSlideMode === null) {
+                        break;
+                    }
+                }
+
+                if (blockedByObstacle && cells.length > 0) {
+                    if (stoppedByMapObstacle) {
+                        cells[cells.length - 1].stopSlideMode =
+                            cells[cells.length - 1].slideMode;
+                        cells[cells.length - 1].stopTileId = stoppingTileId;
+                    }
+                    cells[cells.length - 1].slideMode = null;
+                    cells[cells.length - 1].slideDistance = 0;
+                }
+                if (cells.length === 0) {
+                    return null;
+                }
+
+                return {
+                    direction,
+                    cells,
+                    endIndex: cells[cells.length - 1].index,
+                    cost: cells.reduce(
+                        (total, cell) => total +
+                            getPathPositionMovementCost(cell.row, cell.column),
+                        0
+                    )
+                };
             };
 
-            const pathCosts = new Float64Array(nodeCount);
+            const graphStateCount = nodeCount * directions.length;
+            const startStateId = getGraphStateId(startIndex, startDirection);
+            const movementSpeed = enemy.speed ?? PLAYER_SPEED_TILES_PER_SECOND;
+            const directionChangeCost =
+                ENEMY_DIRECTION_CHANGE_COOLDOWN_MS / 1000 * movementSpeed;
+            const pathCosts = new Float64Array(graphStateCount);
             pathCosts.fill(Infinity);
-            const settled = new Uint8Array(nodeCount);
+            const previous = new Array(graphStateCount);
             const pathQueue = [];
             const enqueuePathNode = (index, cost) => {
                 let queueIndex = pathQueue.length;
@@ -7210,162 +7626,240 @@
                 }
                 return firstNode;
             };
-            goalTargets.forEach((target, index) => {
-                pathCosts[index] = 0;
-                enqueuePathNode(index, 0);
-            });
 
+            pathCosts[startStateId] = 0;
+            enqueuePathNode(startStateId, 0);
+            let goalStateId = null;
+            let goalTarget = null;
+            let goalCost = Infinity;
             while (pathQueue.length > 0) {
                 const currentNode = dequeuePathNode();
                 if (!currentNode || currentNode.cost !== pathCosts[currentNode.index]) {
                     continue;
                 }
-                const currentIndex = currentNode.index;
-                const currentCost = currentNode.cost;
-                settled[currentIndex] = 1;
+                if (currentNode.cost >= goalCost) {
+                    break;
+                }
 
-                getNeighbors(currentIndex).forEach((neighbor) => {
-                    if (!isEnemyPathPositionWalkable(neighbor.row, neighbor.column)) {
+                const currentStateId = currentNode.index;
+                const currentIndex = Math.floor(
+                    currentStateId / directions.length
+                );
+                const incomingDirection = directions[
+                    currentStateId % directions.length
+                ];
+                const row = Math.floor(currentIndex / width);
+                const column = currentIndex % width;
+                const canContinueCurrentSlide = currentStateId === startStateId &&
+                    initialSlideMode !== null;
+                const currentGoal = goalTargets.get(currentIndex);
+                if (currentGoal && !canContinueCurrentSlide) {
+                    const terminalTurnCost =
+                        incomingDirection === currentGoal.direction
+                            ? 0
+                            : directionChangeCost;
+                    const candidateGoalCost = currentNode.cost + terminalTurnCost;
+                    if (candidateGoalCost < goalCost) {
+                        goalStateId = currentStateId;
+                        goalTarget = currentGoal;
+                        goalCost = candidateGoalCost;
+                    }
+                }
+
+                const currentDirections = canContinueCurrentSlide
+                    ? [enemy.slidingDirection]
+                    : directions;
+                currentDirections.forEach((direction) => {
+                    if (!direction) {
                         return;
                     }
-                    const neighborIndex = neighbor.row * width + neighbor.column;
-                    const reverseStepKey = `${neighbor.row},${neighbor.column}:${
-                        reverseDirection(neighbor.direction)
-                    }`;
-                    if (
-                        settled[neighborIndex] ||
-                        (blockedSteps.get(reverseStepKey) ?? 0) > now
-                    ) {
+                    const initialBlockedKey = `${row},${column}:${direction}`;
+                    if ((blockedSteps.get(initialBlockedKey) ?? 0) > now) {
                         return;
                     }
-                    const traversalCost = getEnemyPathPositionPreferenceCost(
-                        neighbor.row,
-                        neighbor.column
+
+                    const segment = tracePathSegment(
+                        row,
+                        column,
+                        direction,
+                        canContinueCurrentSlide ? initialSlideMode : null,
+                        canContinueCurrentSlide ? initialSlideDistance : 0
                     );
-                    const nextCost = currentCost + traversalCost;
-                    if (nextCost < pathCosts[neighborIndex]) {
-                        pathCosts[neighborIndex] = nextCost;
-                        enqueuePathNode(neighborIndex, nextCost);
+                    if (!segment) {
+                        return;
+                    }
+
+                    const turnCost = direction === incomingDirection
+                        ? 0
+                        : directionChangeCost;
+                    const nextCost = currentNode.cost + segment.cost + turnCost;
+                    const nextStateId = getGraphStateId(
+                        segment.endIndex,
+                        direction
+                    );
+                    if (nextCost < pathCosts[nextStateId]) {
+                        pathCosts[nextStateId] = nextCost;
+                        previous[nextStateId] = {
+                            fromStateId: currentStateId,
+                            segment
+                        };
+                        enqueuePathNode(nextStateId, nextCost);
                     }
                 });
             }
 
-            if (!Number.isFinite(pathCosts[startIndex])) {
-                enemy.pathRouteCache = {
-                    mapVersion: mapRenderVersion,
-                    targetKey,
-                    aiState: enemy.aiState,
-                    steps: new Map([[startIndex, null]])
-                };
+            if (goalStateId === null) {
+                if (blockedSteps.size > 0) {
+                    blockedSteps.clear();
+                    enemy.pathRouteCache = null;
+                    return getEnemyPathDirection(enemy, aiState);
+                }
+                enemy.pathRouteCache = null;
                 return null;
             }
 
-            if (goalTargets.has(startIndex)) {
-                const target = goalTargets.get(startIndex);
-                const routeStep = target && target.kind !== 'escape'
-                    ? { direction: target.direction, tileId: null, targetKind: target.kind }
-                    : null;
-                enemy.pathRouteCache = {
-                    mapVersion: mapRenderVersion,
-                    targetKey,
-                    aiState: enemy.aiState,
-                    steps: new Map([[startIndex, routeStep]])
-                };
-                return routeStep;
+            const segments = [];
+            let traceStateId = goalStateId;
+            while (traceStateId !== startStateId) {
+                const pathSegment = previous[traceStateId];
+                if (!pathSegment) {
+                    return null;
+                }
+                segments.unshift({
+                    fromStateId: pathSegment.fromStateId,
+                    segment: pathSegment.segment
+                });
+                traceStateId = pathSegment.fromStateId;
             }
 
             const steps = new Map();
-            let currentIndex = startIndex;
-            let currentDirection = enemy.direction;
+            for (const { fromStateId, segment } of segments) {
+                let currentIndex = Math.floor(
+                    fromStateId / directions.length
+                );
+                let currentDirection = directions[
+                    fromStateId % directions.length
+                ];
+                let expectedSlideMode = fromStateId === startStateId
+                    ? initialSlideMode
+                    : null;
+                let expectedSlideDistance = expectedSlideMode === 'normal'
+                    ? initialSlideDistance
+                    : 0;
 
-            while (!goalTargets.has(currentIndex)) {
-                const row = Math.floor(currentIndex / width);
-                const column = currentIndex % width;
-                const candidates = getNeighbors(currentIndex).filter((neighbor) => {
-                    if (!isEnemyPathPositionWalkable(neighbor.row, neighbor.column)) {
-                        return false;
+                for (const cell of segment.cells) {
+                    const nextStateKey = getRouteStateKey(
+                        cell.index,
+                        segment.direction,
+                        cell.slideMode,
+                        cell.slideDistance
+                    );
+                    const sourceStateKey = getRouteStateKey(
+                        currentIndex,
+                        currentDirection,
+                        expectedSlideMode,
+                        expectedSlideDistance
+                    );
+                    const row = Math.floor(currentIndex / width);
+                    const column = currentIndex % width;
+                    steps.set(sourceStateKey, {
+                        direction: segment.direction,
+                        tileId: getEnemyPathTileId(cell.row, cell.column),
+                        routeRow: cell.row,
+                        routeColumn: cell.column,
+                        targetKind: null,
+                        blockedKey: `${row},${column}:${segment.direction}`,
+                        expectedSlideMode,
+                        expectedSlideDirection: expectedSlideMode
+                            ? currentDirection
+                            : null,
+                        expectedSlideDistance,
+                        expectedStopAtObstacle: Boolean(cell.stopSlideMode),
+                        expectedStopTileId: cell.stopTileId,
+                        nextStateKey
+                    });
+                    if (cell.stopSlideMode === 'compact') {
+                        const stoppedSlideKey = getRouteStateKey(
+                            cell.index,
+                            segment.direction,
+                            'compact'
+                        );
+                        steps.set(stoppedSlideKey, {
+                            direction: segment.direction,
+                            tileId: getEnemyPathTileId(cell.row, cell.column),
+                            routeRow: cell.row,
+                            routeColumn: cell.column,
+                            targetKind: null,
+                            blockedKey: null,
+                            expectedSlideMode: 'compact',
+                            expectedSlideDirection: segment.direction,
+                            expectedSlideDistance: 0,
+                            expectedStopAtObstacle: true,
+                            expectedStopTileId: cell.stopTileId,
+                            nextStateKey: getRouteStateKey(
+                                cell.index,
+                                segment.direction,
+                                null
+                            )
+                        });
                     }
-                    const neighborIndex = neighbor.row * width + neighbor.column;
-                    const blockedKey = `${row},${column}:${neighbor.direction}`;
-                    return pathCosts[neighborIndex] < pathCosts[currentIndex] &&
-                        (blockedSteps.get(blockedKey) ?? 0) <= now;
-                }).map((neighbor) => {
-                    const neighborIndex = neighbor.row * width + neighbor.column;
-                    return {
-                        ...neighbor,
-                        index: neighborIndex,
-                        preferenceCost: pathCosts[neighborIndex],
-                        blockedKey: `${row},${column}:${neighbor.direction}`
-                    };
-                });
-
-                if (candidates.length === 0) {
-                    enemy.pathRouteCache = null;
-                    return null;
+                    currentIndex = cell.index;
+                    currentDirection = segment.direction;
+                    expectedSlideMode = cell.slideMode;
+                    expectedSlideDistance = cell.slideDistance;
                 }
-
-                const reverseCurrentDirection = reverseDirection(currentDirection);
-                const bestStep = candidates.reduce((best, candidate) => {
-                    const candidateScore = candidate.preferenceCost + (
-                        candidate.direction === reverseCurrentDirection ? 0.75 : 0
-                    );
-                    const bestScore = best.preferenceCost + (
-                        best.direction === reverseCurrentDirection ? 0.75 : 0
-                    );
-
-                    if (
-                        candidateScore < bestScore ||
-                        (Math.abs(candidateScore - bestScore) < 1e-9 &&
-                            (candidate.direction === currentDirection ||
-                                (candidate.direction !== reverseCurrentDirection &&
-                                    best.direction === reverseCurrentDirection)))
-                    ) {
-                        return candidate;
-                    }
-                    return best;
-                });
-                const routeStep = {
-                    direction: bestStep.direction,
-                    tileId: getEnemyPathTileId(bestStep.row, bestStep.column),
-                    routeRow: bestStep.row,
-                    routeColumn: bestStep.column,
-                    targetKind: null,
-                    blockedKey: bestStep.blockedKey
-                };
-                steps.set(currentIndex, routeStep);
-                currentIndex = bestStep.index;
-                currentDirection = bestStep.direction;
             }
 
-            const target = goalTargets.get(currentIndex);
-            if (target) {
-                steps.set(currentIndex, target.kind === 'escape'
-                    ? null
-                    : {
-                        direction: target.direction,
-                        tileId: null,
-                        targetKind: target.kind,
-                        blockedKey: null
-                    });
+            const goalPositionIndex = Math.floor(
+                goalStateId / directions.length
+            );
+            const goalDirection = directions[
+                goalStateId % directions.length
+            ];
+            const goalStateKey = getRouteStateKey(
+                goalPositionIndex,
+                goalDirection,
+                null
+            );
+            const routeStep = goalTarget.kind === 'escape'
+                ? null
+                : {
+                    direction: goalTarget.direction,
+                    tileId: null,
+                    targetKind: goalTarget.kind,
+                    blockedKey: null,
+                    expectedSlideMode: null,
+                    expectedSlideDirection: null,
+                    expectedSlideDistance: 0
+                };
+            if (routeStep) {
+                steps.set(goalStateKey, routeStep);
             }
 
             enemy.pathRouteCache = {
                 mapVersion: mapRenderVersion,
                 targetKey,
-                aiState: enemy.aiState,
+                aiState,
                 steps
             };
-            return steps.get(startIndex) ?? null;
+            return steps.get(startRouteKey) ?? null;
         }
 
         function alignEnemyToRouteCenter(enemy, direction, routeStep) {
             if (
+                enemy.slidingDirection ||
                 !Number.isInteger(routeStep?.routeRow) ||
                 !Number.isInteger(routeStep?.routeColumn)
             ) {
                 return;
             }
 
+            const tileDimensions = getTileDimensions();
+            const subTileDimensions = getSubTileDimensions();
+            const movesVertically = direction === 'UP' || direction === 'DOWN';
+            let targetCoordinate = movesVertically
+                ? (routeStep.routeColumn + 1) * tileDimensions.width
+                : (routeStep.routeRow + 1) * tileDimensions.height;
             const roadAnchors = [];
             for (let row = routeStep.routeRow; row < routeStep.routeRow + 2; row += 1) {
                 for (
@@ -7379,61 +7873,66 @@
                     }
                 }
             }
-            if (roadAnchors.length === 0) {
-                return;
-            }
 
-            const tileDimensions = getTileDimensions();
-            const tankCenterX = enemy.physicsX / tileDimensions.width;
-            const tankCenterY = enemy.physicsY / tileDimensions.height;
-            const road = roadAnchors.reduce((best, candidate) => {
-                const candidateSize = getElementFootprintSize(candidate.tileId);
-                const bestSize = getElementFootprintSize(best.tileId);
-                const candidateDistance = Math.hypot(
-                    tankCenterX - (candidate.column + candidateSize.width / 2),
-                    tankCenterY - (candidate.row + candidateSize.height / 2)
-                );
-                const bestDistance = Math.hypot(
-                    tankCenterX - (best.column + bestSize.width / 2),
-                    tankCenterY - (best.row + bestSize.height / 2)
-                );
-                return candidateDistance < bestDistance ? candidate : best;
-            }, roadAnchors[0]);
-            const roadSize = getElementFootprintSize(road.tileId);
-            let nextX = enemy.physicsX;
-            let nextY = enemy.physicsY;
-
-            if (roadSize.width === roadSize.height) {
-                nextX = (road.column + roadSize.width / 2) * tileDimensions.width;
-                nextY = (road.row + roadSize.height / 2) * tileDimensions.height;
-            } else if (roadSize.width > roadSize.height) {
-                if (direction === 'UP' || direction === 'DOWN') {
-                    nextX = (road.column + roadSize.width / 2) * tileDimensions.width;
-                } else {
-                    nextY = (road.row + roadSize.height / 2) * tileDimensions.height;
+            if (roadAnchors.length > 0) {
+                const tankCenterX = enemy.physicsX / tileDimensions.width;
+                const tankCenterY = enemy.physicsY / tileDimensions.height;
+                const road = roadAnchors.reduce((best, candidate) => {
+                    const candidateSize = getElementFootprintSize(candidate.tileId);
+                    const bestSize = getElementFootprintSize(best.tileId);
+                    const candidateDistance = Math.hypot(
+                        tankCenterX - (candidate.column + candidateSize.width / 2),
+                        tankCenterY - (candidate.row + candidateSize.height / 2)
+                    );
+                    const bestDistance = Math.hypot(
+                        tankCenterX - (best.column + bestSize.width / 2),
+                        tankCenterY - (best.row + bestSize.height / 2)
+                    );
+                    return candidateDistance < bestDistance ? candidate : best;
+                }, roadAnchors[0]);
+                const roadSize = getElementFootprintSize(road.tileId);
+                if (roadSize.width === roadSize.height) {
+                    targetCoordinate = movesVertically
+                        ? (road.column + roadSize.width / 2) * tileDimensions.width
+                        : (road.row + roadSize.height / 2) * tileDimensions.height;
+                } else if (roadSize.width > roadSize.height && movesVertically) {
+                    targetCoordinate =
+                        (road.column + roadSize.width / 2) * tileDimensions.width;
+                } else if (roadSize.height > roadSize.width && !movesVertically) {
+                    targetCoordinate =
+                        (road.row + roadSize.height / 2) * tileDimensions.height;
                 }
-            } else if (direction === 'LEFT' || direction === 'RIGHT') {
-                nextY = (road.row + roadSize.height / 2) * tileDimensions.height;
-            } else {
-                nextX = (road.column + roadSize.width / 2) * tileDimensions.width;
             }
 
-            const alignedPosition = quantizeWorldPosition(nextX, nextY);
-            if (checkTankCollisionAt(
-                alignedPosition.x,
-                alignedPosition.y,
-                direction,
-                getPlayerDimensions(),
-                enemy,
-                true
-            )) {
+            const candidates = getMagnetCandidates(
+                targetCoordinate,
+                movesVertically ? subTileDimensions.width : subTileDimensions.height,
+                OBSTACLE_MAGNET_STEP_IN_SUB_TILES
+            ).sort((first, second) =>
+                Math.abs(first - targetCoordinate) - Math.abs(second - targetCoordinate)
+            );
+
+            for (const candidate of candidates) {
+                const nextX = movesVertically ? candidate : enemy.physicsX;
+                const nextY = movesVertically ? enemy.physicsY : candidate;
+                const alignedPosition = quantizeWorldPosition(nextX, nextY);
+                if (checkTankCollisionAt(
+                    alignedPosition.x,
+                    alignedPosition.y,
+                    direction,
+                    getPlayerDimensions(),
+                    enemy,
+                    true
+                )) {
+                    continue;
+                }
+
+                enemy.physicsX = alignedPosition.x;
+                enemy.physicsY = alignedPosition.y;
+                enemy.x = alignedPosition.x;
+                enemy.y = alignedPosition.y;
                 return;
             }
-
-            enemy.physicsX = alignedPosition.x;
-            enemy.physicsY = alignedPosition.y;
-            enemy.x = alignedPosition.x;
-            enemy.y = alignedPosition.y;
         }
 
         function chooseEnemyDirection(enemy, forceReverse = false) {
@@ -7441,21 +7940,22 @@
             enemy.pathTargetKind = null;
             enemy.pathRouteStep = null;
 
+            const pathAiState = getEnemyPathAiState(enemy);
             if (
                 ['f', 'e'].includes(enemy.textureType) &&
-                (
-                    enemy.aiState === 'eagle' ||
-                    enemy.aiState === 'player' ||
-                    enemy.aiState === 'escape'
-                )
+                ['eagle', 'player', 'escape'].includes(pathAiState)
             ) {
-                let path = getEnemyPathDirection(enemy);
-                if (!path && enemy.aiState === 'eagle') {
-                    enemy.primaryAiState = 'player';
-                    enemy.aiState = 'player';
+                let path = getEnemyPathDirection(enemy, pathAiState);
+                if (!path && pathAiState === 'eagle' && !enemy.slidingDirection) {
+                    if (enemy.aiState === 'random') {
+                        enemy.primaryAiState = 'player';
+                    } else {
+                        enemy.aiState = 'player';
+                        enemy.primaryAiState = 'player';
+                    }
                     enemy.pathBlockedSteps?.clear();
                     enemy.pathRouteCache = null;
-                    path = getEnemyPathDirection(enemy);
+                    path = getEnemyPathDirection(enemy, 'player');
                 }
                 if (path) {
                     enemy.pathRouteStep = path;
@@ -7465,39 +7965,24 @@
                     return path.direction;
                 }
             }
+            if (enemy.slidingDirection) {
+                enemy.pathBlockedStepKey = null;
+                return enemy.slidingDirection;
+            }
             enemy.pathBlockedStepKey = null;
 
             const directions = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
             const currentDirection = enemy.direction ?? 'UP';
             const currentReverse = reverseDirection(currentDirection);
-            const tankDimensions = getPlayerDimensions();
             const recentIceExitDirection = (
                 enemy.recentIceExitDirection &&
                 (enemy.recentIceExitUntil ?? 0) > gameTime
             )
                 ? enemy.recentIceExitDirection
                 : null;
-            const openDirections = directions.filter((direction) => {
-                const movement = getTileDimensions().width * 0.9;
-                const nextPosition = gameCore.getPositionInDirection(
-                    enemy.physicsX,
-                    enemy.physicsY,
-                    direction,
-                    movement
-                );
-                const quantizedNext = quantizeWorldPosition(
-                    nextPosition.x,
-                    nextPosition.y
-                );
-                return !checkTankCollisionAt(
-                    quantizedNext.x,
-                    quantizedNext.y,
-                    direction,
-                    tankDimensions,
-                    enemy,
-                    true
-                );
-            });
+            const openDirections = directions.filter((direction) =>
+                getEnemyDirectionFree(enemy, direction, true)
+            );
 
             if (openDirections.length === 0) {
                 return currentReverse;
@@ -7542,11 +8027,30 @@
             );
         }
 
-        function getEnemyDirectionFree(enemy, direction) {
+        function getEnemyDirectionFree(enemy, direction, alignBeforeMoving = false) {
+            let startX = enemy.physicsX;
+            let startY = enemy.physicsY;
+            if (alignBeforeMoving) {
+                const subTileDimensions = getSubTileDimensions();
+                const alignment = gameCore.getTankAlignmentForDirection(
+                    startX,
+                    startY,
+                    direction,
+                    subTileDimensions.width,
+                    subTileDimensions.height,
+                    MAGNET_STEP_IN_SUB_TILES
+                );
+                if (alignment.axis === 'x') {
+                    startX = alignment.value;
+                } else {
+                    startY = alignment.value;
+                }
+            }
+
             const movement = getTileDimensions().width * 0.9;
             const nextPosition = gameCore.getPositionInDirection(
-                enemy.physicsX,
-                enemy.physicsY,
+                startX,
+                startY,
                 direction,
                 movement
             );
@@ -7554,43 +8058,38 @@
                 nextPosition.x,
                 nextPosition.y
             );
-            return !checkTankCollisionAt(
+            if (!checkTankCollisionAt(
                 quantizedNext.x,
                 quantizedNext.y,
                 direction,
                 getPlayerDimensions(),
                 enemy,
                 true
-            );
+            )) {
+                return true;
+            }
+
+            return Boolean(getEnemyMagnetizedMovement(
+                enemy,
+                direction,
+                movement,
+                startX,
+                startY
+            ));
         }
 
         function isEnemyCompletelyEncased(enemy) {
             const directions = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
-            return directions.every((direction) => !getEnemyDirectionFree(enemy, direction));
-        }
-
-        function getAlignedPlayerDirection(enemy) {
-            const tileDimensions = getTileDimensions();
-            return gameCore.getAlignedPlayerDirection(
-                Player.x,
-                Player.y,
-                enemy.x,
-                enemy.y,
-                tileDimensions.width,
-                tileDimensions.height
+            return directions.every((direction) =>
+                !getEnemyDirectionFree(enemy, direction, true)
             );
         }
 
-        function getEnemyPlayerAimDirection(enemy) {
-            const alignedDirection = getAlignedPlayerDirection(enemy);
-            return gameCore.getEnemyPlayerAimDirection(
-                alignedDirection,
-                enemy.textureType,
-                enemy.aiState
-            );
-        }
-
-        function fireEnemyBullet(enemy, directionOverride = null) {
+        function fireEnemyBullet(
+            enemy,
+            directionOverride = null,
+            { clearBrickPassage = false } = {}
+        ) {
             if (!isSimulationActive || !enemy) {
                 return;
             }
@@ -7612,16 +8111,40 @@
                 return;
             }
 
-            const cooldownMs = getEnemyFireCooldownMs(enemy);
+            const direction = directionOverride ?? enemy.direction ?? 'UP';
+            const cooldownMs = getEnemyFireCooldownMs(enemy, direction);
             const cooldownPassed = gameTime >= (enemy.fireCooldownUntil ?? 0);
             if (!cooldownPassed) {
                 return;
             }
 
-            const direction = directionOverride ??
-                getEnemyPlayerAimDirection(enemy) ??
-                enemy.direction ??
-                'UP';
+            let clearanceOffset = { x: 0, y: 0 };
+            if (
+                clearBrickPassage &&
+                ['e', 'f'].includes(enemy.textureType) &&
+                (
+                    BRICK_TILE_IDS.has(getEnemyBlockingTileId(
+                        enemy,
+                        enemy.x,
+                        enemy.y,
+                        direction
+                    )) ||
+                    BRICK_TILE_IDS.has(enemy.pathTargetTileId)
+                )
+            ) {
+                const lane = enemy.nextBrickClearanceLane ?? -1;
+                const tileDimensions = getTileDimensions();
+                const laneOffset = (
+                    direction === 'UP' || direction === 'DOWN'
+                        ? tileDimensions.width
+                        : tileDimensions.height
+                ) * 0.5 * lane;
+                clearanceOffset = direction === 'UP' || direction === 'DOWN'
+                    ? { x: laneOffset, y: 0 }
+                    : { x: 0, y: laneOffset };
+                enemy.nextBrickClearanceLane = lane * -1;
+            }
+
             const burstDirections = getTankBurstDirections(tankType, direction);
             enemy.lastShotAt = gameTime;
             enemy.fireCooldownUntil = gameTime + cooldownMs;
@@ -7634,12 +8157,19 @@
 
             if (tankType === 9) {
                 const burstId = nextBulletBurstId++;
-                spawnEnemyTankBullet(enemy, burstDirections[0], bulletSize, burstId);
+                spawnEnemyTankBullet(
+                    enemy,
+                    burstDirections[0],
+                    bulletSize,
+                    burstId,
+                    clearanceOffset
+                );
                 enemyRank9Bursts.set(enemy.id, {
                     enemy,
                     id: burstId,
                     direction: burstDirections[0],
                     tankType,
+                    offset: clearanceOffset,
                     remaining: 2,
                     nextShotAt: gameTime + 90,
                     waitUntil: null
@@ -7648,13 +8178,16 @@
             }
 
             burstDirections.forEach((bulletDirection, index) => {
-                const offset = offsets[index] ?? { x: 0, y: 0 };
+                const burstOffset = offsets[index] ?? { x: 0, y: 0 };
                 spawnEnemyTankBullet(
                     enemy,
                     bulletDirection,
                     bulletSize,
                     null,
-                    offset
+                    {
+                        x: burstOffset.x + clearanceOffset.x,
+                        y: burstOffset.y + clearanceOffset.y
+                    }
                 );
             });
         }
@@ -7701,7 +8234,7 @@
                         burst.direction,
                         bulletSize,
                         burst.id,
-                        { x: 0, y: 0 },
+                        burst.offset ?? { x: 0, y: 0 },
                         burst.tankType
                     );
                     burst.remaining -= 1;
@@ -7729,30 +8262,108 @@
 
         function getEnemyBlockingTileId(enemy, centerX, centerY, direction) {
             const dimensions = getPlayerDimensions();
-            const tileDimensions = getTileDimensions();
-            const samplePositions = gameCore.getForwardTileSamplePositions(
-                centerX,
-                centerY,
-                direction,
-                dimensions.width,
-                dimensions.height,
-                tileDimensions.width,
-                tileDimensions.height
-            );
-            if (!samplePositions) {
+            const vector = gameCore.getDirectionVector(direction);
+            if (!vector) {
                 return null;
             }
 
-            for (const { row, column, x: sampleX, y: sampleY } of samplePositions) {
-                const element = getElementAnchor(row, column);
-                const tileId = element?.tileId ?? mapGrid[row]?.[column] ?? null;
+            const subTileDimensions = getSubTileDimensions();
+            const forwardExtent = Math.max(dimensions.width, dimensions.height) / 2;
+            const leadingEdgeThreshold = forwardExtent -
+                Math.min(subTileDimensions.width, subTileDimensions.height);
+            let blockingTileId = null;
 
-                if (
-                    (tileId !== null &&
-                        isBlockingTileAt(row, column, sampleX, sampleY)) ||
-                    (element && isSolidTile(element.tileId))
-                ) {
-                    return tileId;
+            forEachTankHitboxPixel(
+                PLAYER_HITBOX_MASKS.object,
+                centerX,
+                centerY,
+                direction,
+                dimensions,
+                (pixelX, pixelY) => {
+                    if (blockingTileId !== null) {
+                        return;
+                    }
+
+                    const forwardDistance = (
+                        (pixelX - centerX) * vector.x +
+                        (pixelY - centerY) * vector.y
+                    );
+                    if (forwardDistance < leadingEdgeThreshold) {
+                        return;
+                    }
+
+                    const subTileColumn = Math.floor(pixelX / subTileDimensions.width);
+                    const subTileRow = Math.floor(pixelY / subTileDimensions.height);
+                    const row = Math.floor(subTileRow / SUB_TILES_PER_TILE);
+                    const column = Math.floor(subTileColumn / SUB_TILES_PER_TILE);
+                    const tileId = mapGrid[row]?.[column];
+                    const element = getElementAnchor(row, column);
+                    if (
+                        (tileId !== null &&
+                            tileId !== undefined &&
+                            isBlockingTileAt(row, column, pixelX, pixelY)) ||
+                        (element && isSolidTile(element.tileId))
+                    ) {
+                        blockingTileId = isSolidTile(tileId)
+                            ? tileId
+                            : element?.tileId ?? tileId;
+                    }
+                }
+            );
+
+            return blockingTileId;
+        }
+
+        function getEnemyMagnetizedMovement(
+            enemy,
+            direction,
+            movement,
+            startX = enemy.physicsX,
+            startY = enemy.physicsY
+        ) {
+            const subTileDimensions = getSubTileDimensions();
+            const movesVertically = direction === 'UP' || direction === 'DOWN';
+            const visualStart = quantizeWorldPosition(startX, startY);
+            const candidates = movesVertically
+                ? getMagnetCandidates(
+                    visualStart.x,
+                    subTileDimensions.width,
+                    OBSTACLE_MAGNET_STEP_IN_SUB_TILES
+                )
+                : getMagnetCandidates(
+                    visualStart.y,
+                    subTileDimensions.height,
+                    OBSTACLE_MAGNET_STEP_IN_SUB_TILES
+                );
+
+            for (const candidate of candidates) {
+                const candidateStartX = movesVertically ? candidate : startX;
+                const candidateStartY = movesVertically ? startY : candidate;
+                const nextPosition = gameCore.getPositionInDirection(
+                    candidateStartX,
+                    candidateStartY,
+                    direction,
+                    movement
+                );
+                const quantizedPosition = quantizeWorldPosition(
+                    nextPosition.x,
+                    nextPosition.y
+                );
+
+                if (!checkTankCollisionAt(
+                    quantizedPosition.x,
+                    quantizedPosition.y,
+                    direction,
+                    getPlayerDimensions(),
+                    enemy,
+                    true
+                )) {
+                    return {
+                        physicsX: nextPosition.x,
+                        physicsY: nextPosition.y,
+                        x: quantizedPosition.x,
+                        y: quantizedPosition.y
+                    };
                 }
             }
 
@@ -7765,6 +8376,20 @@
             }
 
             moveEnemyBesidePlayerSpawn(enemy, getActivePlayerSpawnTileId());
+        }
+
+        function setEnemyDirection(enemy, direction) {
+            if (!direction || direction === enemy.direction) {
+                return true;
+            }
+            if (gameTime < (enemy.nextDirectionChangeAt ?? 0)) {
+                return false;
+            }
+
+            enemy.direction = direction;
+            enemy.nextDirectionChangeAt = gameTime +
+                ENEMY_DIRECTION_CHANGE_COOLDOWN_MS;
+            return true;
         }
 
         function updateEnemy(enemy, deltaSeconds) {
@@ -7784,7 +8409,7 @@
                     enemy.substate = 'Normal';
                     enemy.nextTrappedShotAt = 0;
                     clearEnemySliding(enemy);
-                    enemy.direction = chooseEnemyDirection(enemy, false);
+                    setEnemyDirection(enemy, chooseEnemyDirection(enemy, false));
                     enemy.remainingDistance = 0;
                     return;
                 }
@@ -7792,8 +8417,8 @@
                 const directions = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
                 if (!enemy.nextTrappedShotAt || gameTime >= enemy.nextTrappedShotAt) {
                     const randomDirection = directions[Math.floor(Math.random() * directions.length)];
-                    enemy.direction = randomDirection;
-                    fireEnemyBullet(enemy, randomDirection);
+                    setEnemyDirection(enemy, randomDirection);
+                    fireEnemyBullet(enemy, enemy.direction);
                     enemy.nextTrappedShotAt = gameTime + getEnemyFireCooldownMs(enemy);
                 }
                 return;
@@ -7803,7 +8428,10 @@
                 enemy.substate = 'Trapped';
                 enemy.nextTrappedShotAt = gameTime;
                 clearEnemySliding(enemy);
-                enemy.direction = ['UP', 'RIGHT', 'DOWN', 'LEFT'][Math.floor(Math.random() * 4)];
+                setEnemyDirection(
+                    enemy,
+                    ['UP', 'RIGHT', 'DOWN', 'LEFT'][Math.floor(Math.random() * 4)]
+                );
                 return;
             }
             if (!enemy.aiState || !enemy.aiStateUntil || gameTime >= enemy.aiStateUntil) {
@@ -7837,42 +8465,64 @@
                 ) {
                     clearEnemySliding(enemy);
                 }
-
-                const canKeepSliding = enemy.slidingDirection &&
-                    getEnemyDirectionFree(enemy, enemy.slidingDirection);
-                if (enemy.slidingDirection && !canKeepSliding) {
-                    clearEnemySliding(enemy);
-                    enemy.direction = chooseEnemyDirection(enemy, true);
-                    enemy.remainingDistance = 0;
-                } else if (!enemy.slidingDirection) {
+                if (!enemy.slidingDirection) {
                     enemy.remainingDistance = 0;
                 }
             }
 
-            if (enemy.slidingDirection) {
-                enemy.direction = enemy.slidingDirection;
+            if (
+                !enemy.slidingDirection &&
+                enemy.pathRouteCache &&
+                (
+                    enemy.pathRouteCache.aiState !== getEnemyPathAiState(enemy) ||
+                    !['eagle', 'player', 'escape'].includes(
+                        getEnemyPathAiState(enemy)
+                    )
+                )
+            ) {
+                enemy.pathRouteCache = null;
             }
 
             if (!enemy.remainingDistance || enemy.remainingDistance <= 0) {
                 const followsSmartPath = ['f', 'e'].includes(enemy.textureType) &&
-                    ['eagle', 'player', 'escape'].includes(enemy.aiState);
+                    ['eagle', 'player', 'escape'].includes(
+                        getEnemyPathAiState(enemy)
+                    );
                 enemy.remainingDistance = followsSmartPath
                     ? 1
                     : Math.random() * (
                         ENEMY_TANK_MAX_MOVE_TILES - ENEMY_TANK_MIN_MOVE_TILES
                     ) + ENEMY_TANK_MIN_MOVE_TILES;
-                const nextDirection = chooseEnemyDirection(enemy, false);
-                if (!enemy.slidingDirection && nextDirection !== enemy.direction) {
+                let nextDirection = chooseEnemyDirection(enemy, false);
+                const isAttackingPlayer = ['e', 'f'].includes(enemy.textureType) &&
+                    getEnemyPathAiState(enemy) === 'player' &&
+                    enemy.pathTargetKind === 'player' &&
+                    !enemy.slidingDirection;
+                const aimDirection = isAttackingPlayer
+                    ? enemy.pathRouteStep.direction
+                    : null;
+                if (aimDirection) {
+                    nextDirection = aimDirection;
+                }
+                const isChangingDirection = !enemy.slidingDirection &&
+                    nextDirection !== enemy.direction;
+                if (isChangingDirection && !setEnemyDirection(enemy, nextDirection)) {
+                    enemy.remainingDistance = 0;
+                    enemy.isMoving = false;
+                    return;
+                }
+                if (isChangingDirection) {
                     alignEnemyForDirection(enemy, nextDirection);
                 }
                 alignEnemyToRouteCenter(enemy, nextDirection, enemy.pathRouteStep);
-                enemy.direction = nextDirection;
+                if (aimDirection) {
+                    fireEnemyBullet(enemy, aimDirection);
+                    enemy.remainingDistance = 0;
+                    return;
+                }
             }
 
             const movementDirection = enemy.slidingDirection ?? enemy.direction;
-            if (['f', 'e'].includes(enemy.textureType)) {
-                enemy.direction = movementDirection;
-            }
             const subTileDimensions = getSubTileDimensions();
             const speedFactor = gameCore.getTankTerrainSpeedMultiplier(
                 isEnemyTouchingTile(VERY_DENSE_BUSH_ID, enemy),
@@ -7923,6 +8573,61 @@
                 return;
             }
 
+            const wasSlidingIntoObstacle = Boolean(enemy.slidingDirection);
+            const reachedPlannedIceStop = wasSlidingIntoObstacle &&
+                enemy.pathRouteStep?.expectedStopAtObstacle === true &&
+                enemy.pathRouteStep.expectedStopTileId ===
+                    getEnemyBlockingTileId(
+                        enemy,
+                        nextQuantized.x,
+                        nextQuantized.y,
+                        movementDirection
+                    );
+            if (wasSlidingIntoObstacle) {
+                clearEnemySliding(enemy);
+                enemy.remainingDistance = 0;
+            }
+            const magnetizedMovement = wasSlidingIntoObstacle
+                ? null
+                : getEnemyMagnetizedMovement(
+                    enemy,
+                    movementDirection,
+                    movement
+                );
+            if (magnetizedMovement) {
+                const tileDimensions = getTileDimensions();
+                const previousRouteIndex = (
+                    Math.round(enemy.physicsY / tileDimensions.height) - 1
+                ) * mapWidth + Math.round(enemy.physicsX / tileDimensions.width) - 1;
+                enemy.physicsX = magnetizedMovement.physicsX;
+                enemy.physicsY = magnetizedMovement.physicsY;
+                enemy.x = magnetizedMovement.x;
+                enemy.y = magnetizedMovement.y;
+                enemy.lastBlockedTileId = null;
+                enemy.remainingDistance -= movement / getTileDimensions().width;
+                enemy.distanceTravelled = (enemy.distanceTravelled ?? 0) + movement;
+                enemy.isMoving = true;
+                playIceTurnSound(
+                    wasMoving,
+                    previousDirection,
+                    movementDirection,
+                    wasTouchingIce
+                );
+                updateEnemySlidingAfterMovement(enemy, movementDirection, movement);
+                fireEnemyBullet(enemy);
+                enemy.pathBlockedStepKey = null;
+                if (['e', 'f'].includes(enemy.textureType)) {
+                    const nextRouteIndex = (
+                        Math.round(enemy.physicsY / tileDimensions.height) - 1
+                    ) * mapWidth + Math.round(enemy.physicsX / tileDimensions.width) - 1;
+                    if (nextRouteIndex !== previousRouteIndex) {
+                        enemy.pathRouteCache = null;
+                        enemy.remainingDistance = 0;
+                    }
+                }
+                return;
+            }
+
             enemy.isMoving = false;
             const blockingTileId = getEnemyBlockingTileId(
                 enemy,
@@ -7934,6 +8639,9 @@
 
             const blockedByBrick = BRICK_TILE_IDS.has(blockingTileId) ||
                 (blockingTileId === null && BRICK_TILE_IDS.has(enemy.pathTargetTileId));
+            const blockedByBreakableSteel = ['e', 'f'].includes(enemy.textureType) &&
+                [3, 10].includes(getEnemyTankType(enemy)) &&
+                blockingTileId === SOLID_BLOCK_ID;
             const reachedPathTarget = (
                 enemy.pathTargetKind === 'eagle' &&
                 (blockingTileId === null || blockingTileId === EAGLE_ID)
@@ -7944,9 +8652,17 @@
 
             if (
                 ['f', 'e'].includes(enemy.textureType) &&
-                (blockedByBrick || reachedPathTarget)
+                (blockedByBrick || blockedByBreakableSteel || reachedPathTarget)
             ) {
-                fireEnemyBullet(enemy, movementDirection);
+                fireEnemyBullet(enemy, movementDirection, {
+                    clearBrickPassage: blockedByBrick
+                });
+                enemy.remainingDistance = 0;
+                return;
+            }
+
+            if (reachedPlannedIceStop) {
+                enemy.pathBlockedStepKey = null;
                 enemy.remainingDistance = 0;
                 return;
             }
@@ -7954,11 +8670,16 @@
             if (
                 ['f', 'e'].includes(enemy.textureType) &&
                 (
-                    enemy.aiState === 'eagle' ||
-                    enemy.aiState === 'player' ||
-                    enemy.aiState === 'escape'
+                    ['eagle', 'player', 'escape'].includes(
+                        getEnemyPathAiState(enemy)
+                    )
                 )
             ) {
+                if (blockingTileId === null) {
+                    enemy.remainingDistance = 0;
+                    return;
+                }
+
                 if (enemy.pathBlockedStepKey) {
                     const blockedSteps = enemy.pathBlockedSteps ?? new Map();
                     enemy.pathBlockedSteps = blockedSteps;
@@ -7978,7 +8699,7 @@
                 return;
             }
 
-            enemy.direction = chooseEnemyDirection(enemy, true);
+            setEnemyDirection(enemy, chooseEnemyDirection(enemy, true));
             enemy.remainingDistance = 0;
         }
 
@@ -8406,19 +9127,11 @@
                 playSoundEffect('pause');
             }
             pressedKeys.clear();
-            activeTouchDirections.clear();
+            clearTouchControlState();
             requestedDirection = null;
             clearPlayerSliding();
             Player.isMoving = false;
             stopMovementAudio();
-            if (touchFireIntervalId !== null) {
-                window.clearInterval(touchFireIntervalId);
-                touchFireIntervalId = null;
-            }
-            touchFirePointerId = null;
-            mobileGameControls.querySelectorAll('.is-pressed').forEach((button) => {
-                button.classList.remove('is-pressed');
-            });
         }
 
         function stopSimulation(resetLives = true) {
@@ -8477,14 +9190,9 @@
             enemyPairsIgnoringCollision.clear();
             playerEnemyPairsIgnoringCollision.clear();
             pressedKeys.clear();
-            activeTouchDirections.clear();
+            clearTouchControlState();
             requestedDirection = null;
             clearPlayerSliding();
-            touchFirePointerId = null;
-            if (touchFireIntervalId !== null) {
-                window.clearInterval(touchFireIntervalId);
-                touchFireIntervalId = null;
-            }
             mobileGameControls.querySelectorAll('.is-pressed').forEach((button) => {
                 button.classList.remove('is-pressed');
             });
@@ -9033,6 +9741,7 @@
             if (Object.hasOwn(tileCounters, element.tileId)) {
                 tileCounters[element.tileId] -= 1;
             }
+            mapRenderVersion += 1;
         }
 
         function isValidMoveTarget(row, column, tileId) {
@@ -9239,6 +9948,12 @@
             context.restore();
         }
 
+        function getMovingPreviewOpacity() {
+            return 0.75 + 0.25 * Math.sin(
+                performance.now() * (Math.PI * 2 / 1200)
+            );
+        }
+
         function drawSelectionOverlay(
             tileWidth,
             tileHeight,
@@ -9269,9 +9984,6 @@
             }
 
             if (isMovingSelection && movingSelection) {
-                const movingOpacity = 0.75 + 0.25 * Math.sin(
-                    timestamp * (Math.PI * 2 / 1200)
-                );
                 drawMovingSelectionTiles(
                     movingSelection.tiles,
                     movingSelection.startRow,
@@ -9289,7 +10001,7 @@
                         tileWidth,
                         tileHeight,
                         timestamp,
-                        movingOpacity
+                        getMovingPreviewOpacity()
                     );
                 }
                 return;
@@ -9743,6 +10455,7 @@
                 offsetColumn: gridPosition.column - bounds.startColumn
             };
             clearSelectionCells(bounds);
+            mapRenderVersion += 1;
             isMovingSelection = true;
             setSelectionActionOpacity(0);
             updateSelectionMovePreview(event);
@@ -10376,25 +11089,39 @@
             const startColumn = Math.round(enemy.physicsX / tileDimensions.width) - 1;
             const route = enemy.pathRouteCache.steps;
             const points = [{ x: enemy.x, y: enemy.y }];
+            const directions = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+            let currentDirection = enemy.slidingDirection ?? enemy.direction ?? 'UP';
+            const currentSlideMode = enemy.slidingDirection
+                ? enemy.slidingOnCompactIce ? 'compact' : 'normal'
+                : null;
+            const getStateKey = (positionIndex, direction, slideMode, slideDistance) => [
+                positionIndex,
+                directions.indexOf(direction),
+                slideMode ?? 'none',
+                slideMode === 'normal'
+                    ? Math.floor(slideDistance + 1e-6)
+                    : 0
+            ].join(':');
             let row = startRow;
             let column = startColumn;
-            let visited = new Set();
             let currentIndex = row * width + column;
+            let currentKey = getStateKey(
+                currentIndex,
+                currentDirection,
+                currentSlideMode,
+                enemy.slidingDistance ?? 0
+            );
+            const visited = new Set();
 
-            while (route.has(currentIndex) && !visited.has(currentIndex)) {
-                visited.add(currentIndex);
-                const step = route.get(currentIndex);
-                if (!step) {
+            while (route.has(currentKey) && !visited.has(currentKey)) {
+                visited.add(currentKey);
+                const step = route.get(currentKey);
+                if (!Number.isInteger(step?.routeRow) ||
+                    !Number.isInteger(step?.routeColumn)) {
                     break;
                 }
-
-                const nextRow = row + (
-                    step.direction === 'DOWN' ? 1 : step.direction === 'UP' ? -1 : 0
-                );
-                const nextColumn = column + (
-                    step.direction === 'RIGHT' ? 1 : step.direction === 'LEFT' ? -1 : 0
-                );
-
+                const nextRow = step.routeRow;
+                const nextColumn = step.routeColumn;
                 if (
                     nextRow < 0 || nextRow >= height ||
                     nextColumn < 0 || nextColumn >= width
@@ -10409,6 +11136,8 @@
                     x: (column + 1) * tileDimensions.width,
                     y: (row + 1) * tileDimensions.height
                 });
+                currentDirection = step.direction;
+                currentKey = step.nextStateKey;
             }
 
             return points;
@@ -10420,9 +11149,9 @@
             }
 
             context.save();
-            context.strokeStyle = '#63f2a7';
-            context.lineWidth = 2;
             context.setLineDash([6, 4]);
+            context.lineCap = 'round';
+            context.lineJoin = 'round';
 
             enemyTanks.forEach((enemy) => {
                 if (!['f', 'e'].includes(enemy.textureType)) {
@@ -10435,11 +11164,17 @@
                 }
 
                 context.beginPath();
-                context.strokeStyle = enemy.textureType === 'e' ? '#58a6ff' : '#63f2a7';
                 context.moveTo(points[0].x, points[0].y);
                 for (let index = 1; index < points.length; index += 1) {
                     context.lineTo(points[index].x, points[index].y);
                 }
+                context.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+                context.lineWidth = 3;
+                context.stroke();
+                context.strokeStyle = enemy.textureType === 'e'
+                    ? '#ff3df2'
+                    : '#ffe600';
+                context.lineWidth = 1.5;
                 context.stroke();
             });
 
@@ -10728,22 +11463,27 @@
                 }
             }
 
-            if (movePreview && movingElement) {
-                const { width: footprintWidth, height: footprintHeight } =
-                    getElementFootprintSize(movingElement.tileId);
-                const previewWidth = tileWidth * footprintWidth;
-                const previewHeight = tileHeight * footprintHeight;
-
-                context.save();
-                context.globalAlpha = 0.45;
-                context.fillStyle = TILE_COLORS[movingElement.tileId];
-                context.fillRect(
-                    movePreview.column * tileWidth,
-                    movePreview.row * tileHeight,
-                    previewWidth,
-                    previewHeight
+            if (isMovingElement && movingElement) {
+                drawMovingSelectionTiles(
+                    [[movingElement.tileId]],
+                    movingElement.row,
+                    movingElement.column,
+                    tileWidth,
+                    tileHeight,
+                    timestamp,
+                    0.25
                 );
-                context.restore();
+                if (movePreview) {
+                    drawMovingSelectionTiles(
+                        [[movingElement.tileId]],
+                        movePreview.row,
+                        movePreview.column,
+                        tileWidth,
+                        tileHeight,
+                        timestamp,
+                        getMovingPreviewOpacity()
+                    );
+                }
             }
 
             if (isSimulationActive && !isPlayerDead && shouldDrawPlayerAfterSpawn) {
@@ -10926,6 +11666,7 @@
                 getConfiguredInitialLives(),
                 getConfiguredMaxActiveEnemies(),
                 isForceInitialLivesEnabled ? '1' : '0',
+                getConfiguredMaxActivePowerUps(),
                 encodeMap()
             ].join('|');
         }
@@ -10937,8 +11678,10 @@
                 defaultEnemySpawnOrder: createDefaultEnemySpawnOrder,
                 defaultInitialLives: MAX_PLAYER_LIVES,
                 defaultMaxActiveEnemies: DEFAULT_MAX_ACTIVE_ENEMIES,
+                defaultMaxActivePowerUps: DEFAULT_MAX_ACTIVE_POWER_UPS,
                 maxPlayerLives: 999,
                 maxActiveEnemies: MAX_ACTIVE_ENEMIES,
+                maxActivePowerUps: MAX_ACTIVE_POWER_UPS,
                 maxMapDimension: MAX_MAP_DIMENSION,
                 powerUpCount: powerUpTextures.length
             });
@@ -10973,6 +11716,7 @@
                 eagleMode: importedMode,
                 initialLives: importedLives,
                 maxActiveEnemies: importedMaxActiveEnemies,
+                maxActivePowerUps: importedMaxActivePowerUps,
                 forceInitialLives: importedForceInitialLives,
                 grid: importedGrid
             } = parsed.level;
@@ -11018,6 +11762,7 @@
                 isForceInitialLivesEnabled
             );
             setConfiguredMaxActiveEnemies(importedMaxActiveEnemies);
+            setConfiguredMaxActivePowerUps(importedMaxActivePowerUps);
             resizeCanvas();
             hasUnsavedLevelChanges = true;
             showLevelActionCheck(importButton);
@@ -11025,6 +11770,7 @@
         }
 
         function renderFrame(timestamp = 0) {
+            window.requestAnimationFrame(renderFrame);
             const realDeltaSeconds = previousFrameTime
                 ? Math.min((timestamp - previousFrameTime) / 1000, 0.05)
                 : 0;
@@ -11082,7 +11828,6 @@
             }
             updateEnemySpawnOrderPreviews(gameTime);
             updateTileSelectorTextures(gameTime);
-            window.requestAnimationFrame(renderFrame);
         }
 
         canvas.addEventListener('pointerdown', (event) => {
@@ -11301,7 +12046,7 @@
                 !isEditingText &&
                 event.key === 'Shift' &&
                 !isSimulationActive &&
-                !settingsDialog.open
+                !isSettingsDialogOpen()
             ) {
                 mapZoomControls.classList.add('shift-pan-active');
                 if (document.activeElement === zoomInButton) {
@@ -11340,83 +12085,135 @@
 
             stopPainting();
         });
-        mobileGameControls.querySelectorAll('[data-game-direction]').forEach((button) => {
-            const direction = button.dataset.gameDirection;
-            const releaseDirection = (event) => {
-                const activeDirection = activeTouchDirections.get(event.pointerId);
-
-                if (!activeDirection) {
-                    return;
-                }
-
-                activeTouchDirections.delete(event.pointerId);
-                if (!Array.from(activeTouchDirections.values()).includes(activeDirection)) {
-                    button.classList.remove('is-pressed');
-                }
-                restoreRequestedDirection(activeDirection);
-            };
-
-            button.addEventListener('pointerdown', (event) => {
-                if (!isSimulationActive || isGamePaused ||
-                    activeTouchDirections.has(event.pointerId)) {
-                    return;
-                }
-
-                event.preventDefault();
-                button.setPointerCapture(event.pointerId);
-                activeTouchDirections.set(event.pointerId, direction);
-                requestedDirection = direction;
-                isPlayerWaitingAfterIceSlide = false;
-                button.classList.add('is-pressed');
-            });
-            button.addEventListener('pointerup', releaseDirection);
-            button.addEventListener('pointercancel', releaseDirection);
-            button.addEventListener('lostpointercapture', releaseDirection);
-        });
         const touchFireButton = mobileGameControls.querySelector('[data-game-fire]');
-        const releaseTouchFire = (event) => {
-            if (touchFirePointerId !== event.pointerId) {
+        function releaseTouchControl(pointerId) {
+            const activeControl = activeTouchControlPointers.get(pointerId);
+            if (!activeControl) {
+                return;
+            }
+            activeTouchControlPointers.delete(pointerId);
+            if (activeControl.direction) {
+                activeTouchDirections.delete(pointerId);
+                restoreRequestedDirection(activeControl.direction);
+            }
+            if (touchFirePointerId === pointerId) {
+                touchFirePointerId = null;
+                if (touchFireIntervalId !== null) {
+                    window.clearInterval(touchFireIntervalId);
+                    touchFireIntervalId = null;
+                }
+            }
+            if (
+                activeControl.button &&
+                !Array.from(activeTouchControlPointers.values())
+                    .some(({ button }) => button === activeControl.button)
+            ) {
+                activeControl.button.classList.remove('is-pressed');
+            }
+        }
+
+        function activateTouchControl(pointerId, button) {
+            const currentControl = activeTouchControlPointers.get(pointerId);
+            if (currentControl?.button === button) {
+                return;
+            }
+            releaseTouchControl(pointerId);
+            if (!button) {
+                activeTouchControlPointers.set(pointerId, { button: null });
                 return;
             }
 
-            touchFirePointerId = null;
-            if (touchFireIntervalId !== null) {
-                window.clearInterval(touchFireIntervalId);
-                touchFireIntervalId = null;
+            if (button.hasAttribute('data-game-fire')) {
+                if (touchFirePointerId !== null && touchFirePointerId !== pointerId) {
+                    activeTouchControlPointers.set(pointerId, { button: null });
+                    return;
+                }
+                activeTouchControlPointers.set(pointerId, { button, direction: null });
+                touchFirePointerId = pointerId;
+                button.classList.add('is-pressed');
+                fireBullet();
+                touchFireIntervalId = window.setInterval(
+                    fireBullet,
+                    BULLET_FIRE_COOLDOWN_SECONDS * 1000
+                );
+                return;
             }
-            touchFireButton.classList.remove('is-pressed');
-        };
 
-        touchFireButton.addEventListener('pointerdown', (event) => {
+            const direction = button.dataset.gameDirection;
+            activeTouchControlPointers.set(pointerId, { button, direction });
+            activeTouchDirections.set(pointerId, direction);
+            requestedDirection = direction;
+            isPlayerWaitingAfterIceSlide = false;
+            button.classList.add('is-pressed');
+        }
+
+        function getTouchControlAtPoint(clientX, clientY) {
+            const element = document.elementFromPoint(clientX, clientY);
+            if (!(element instanceof Element)) {
+                return null;
+            }
+            const button = element.closest('[data-game-direction], [data-game-fire]');
+            return button && mobileGameControls.contains(button) ? button : null;
+        }
+
+        document.addEventListener('pointerdown', (event) => {
             if (!levelScoreScreen.hidden) {
+                if (getTouchControlAtPoint(event.clientX, event.clientY) === touchFireButton) {
+                    event.preventDefault();
+                    continueFromLevelScore();
+                }
+                return;
+            }
+            if (
+                !isSimulationActive ||
+                isGamePaused ||
+                !areTouchControlsEnabled ||
+                mobileGameControls.hidden
+            ) {
+                return;
+            }
+            const target = event.target;
+            if (
+                target instanceof Element &&
+                target.closest('button, a, input, select, textarea, [role="dialog"]') &&
+                !target.closest('#mobileGameControls')
+            ) {
+                return;
+            }
+            const button = getTouchControlAtPoint(event.clientX, event.clientY);
+            if (!['touch', 'pen'].includes(event.pointerType) && !button) {
+                return;
+            }
+            activeTouchControlPointers.set(event.pointerId, { button: null });
+            if (button) {
                 event.preventDefault();
-                continueFromLevelScore();
+                activateTouchControl(event.pointerId, button);
+            }
+        }, true);
+        document.addEventListener('pointermove', (event) => {
+            if (!activeTouchControlPointers.has(event.pointerId)) {
                 return;
             }
-
-            if (!isSimulationActive || isGamePaused || touchFirePointerId !== null) {
-                return;
+            const button = getTouchControlAtPoint(event.clientX, event.clientY);
+            if (button) {
+                event.preventDefault();
             }
-
-            event.preventDefault();
-            touchFireButton.setPointerCapture(event.pointerId);
-            touchFirePointerId = event.pointerId;
-            touchFireButton.classList.add('is-pressed');
-            fireBullet();
-            touchFireIntervalId = window.setInterval(
-                fireBullet,
-                BULLET_FIRE_COOLDOWN_SECONDS * 1000
-            );
-        });
-        touchFireButton.addEventListener('pointerup', releaseTouchFire);
-        touchFireButton.addEventListener('pointercancel', releaseTouchFire);
-        touchFireButton.addEventListener('lostpointercapture', releaseTouchFire);
+            activateTouchControl(event.pointerId, button);
+        }, true);
+        document.addEventListener('pointerup', (event) => {
+            releaseTouchControl(event.pointerId);
+        }, true);
+        document.addEventListener('pointercancel', (event) => {
+            releaseTouchControl(event.pointerId);
+        }, true);
+        document.addEventListener('lostpointercapture', (event) => {
+            releaseTouchControl(event.pointerId);
+        }, true);
         mobileGameControls.addEventListener('contextmenu', (event) => {
             event.preventDefault();
         });
         settingsButton.addEventListener('click', () => {
-            settingsDialog.classList.remove('menu-settings');
-            settingsDialog.showModal();
+            showSettingsDialog();
             window.requestAnimationFrame(applyTouchControlSettings);
         });
         menuFrameToggleInput.addEventListener('change', () => {
@@ -11425,6 +12222,7 @@
         });
         settingsDialog.addEventListener('close', () => {
             settingsDialog.classList.remove('menu-settings');
+            document.body.classList.remove('settings-dialog-fallback-open');
         });
         async function handleMenuReturn() {
             const confirmationMessage = hasUnsavedLevelChanges
@@ -11439,8 +12237,8 @@
             document.body.classList.remove('pack-play-mode');
             isPackPlayMode = false;
             playingPackStage = null;
-            if (settingsDialog.open) {
-                settingsDialog.close();
+            if (settingsDialog.hasAttribute('open')) {
+                closeSettingsDialog();
             }
             if (isSimulationActive) {
                 stopSimulation();
@@ -11455,7 +12253,7 @@
         });
 
         closeSettingsButton.addEventListener('click', () => {
-            settingsDialog.close();
+            closeSettingsDialog();
         });
         const animatedFoldTimers = new WeakMap();
         const expandedFoldSections = new WeakSet();
@@ -11566,7 +12364,7 @@
                 (event.ctrlKey || event.metaKey) &&
                 !event.altKey &&
                 !isSimulationActive &&
-                !settingsDialog.open &&
+                !isSettingsDialogOpen() &&
                 selectionRegion &&
                 ['c', 'x'].includes(event.key.toLowerCase())
             ) {
@@ -11585,7 +12383,7 @@
                 event.key.toLowerCase() === 'v' &&
                 selectionClipboard &&
                 !isSimulationActive &&
-                !settingsDialog.open
+                !isSettingsDialogOpen()
             ) {
                 event.preventDefault();
                 if (!isPasteMode) {
@@ -11651,16 +12449,8 @@
         });
         function clearGameInputState() {
             pressedKeys.clear();
-            activeTouchDirections.clear();
+            clearTouchControlState();
             requestedDirection = null;
-            touchFirePointerId = null;
-            if (touchFireIntervalId !== null) {
-                window.clearInterval(touchFireIntervalId);
-                touchFireIntervalId = null;
-            }
-            mobileGameControls.querySelectorAll('.is-pressed').forEach((button) => {
-                button.classList.remove('is-pressed');
-            });
         }
 
         const gameplayLifecycleModule = window.BC90EGameplayLifecycle;
@@ -11701,6 +12491,10 @@
             document.addEventListener(eventName, preventGestureZoom, { passive: false });
         });
         window.addEventListener('resize', resizeCanvas);
+        window.visualViewport?.addEventListener('resize', () => {
+            resizeCanvas();
+            applyTouchControlSettings();
+        });
         loadTileTextures();
         loadPlayerTextures();
         loadEnemyTextures();
@@ -11736,8 +12530,15 @@
             uiTextureDirectory: UI_TEXTURE_DIRECTORY,
             getCanvasCursorState,
             isSimulationActive: () => isSimulationActive,
-            isMovingElement: () => isMovingElement
+            isMovingElement: () => isMovingElement,
+            settings: settingsApi
         });
+        const savedPixelCursor = settingsApi.readPreference('pixelCursor', {});
+        if (savedPixelCursor && Number.isFinite(savedPixelCursor.size)) {
+            pixelCursorSizeInput.value = String(
+                Math.min(96, Math.max(8, savedPixelCursor.size))
+            );
+        }
         function setToggleButtonState(button, isEnabled) {
             button.classList.toggle('toggle-on', isEnabled);
             button.classList.toggle('toggle-off', !isEnabled);
@@ -11786,7 +12587,8 @@
             appShell,
             applyTouchControlSettings,
             getMapBaseWidth: () => mapCamera.getBaseWidth(),
-            resizeCanvas
+            resizeCanvas,
+            settings: settingsModule
         });
         const updatePageScale = pageScaleUi.update;
 
@@ -11807,6 +12609,7 @@
             enemyDebugToggleButton,
             hitboxToggleButton,
             slowMotionButton,
+            defeatAllEnemiesButton,
             slowMotionScaleInput,
             playerTextureRowInput,
             playerTextureTypeInput,
@@ -11827,6 +12630,7 @@
             setSlowMotionEnabled: (enabled) => {
                 isSlowMotionEnabled = enabled;
             },
+            defeatAllActiveEnemies,
             setSlowMotionTimeScale: (scale) => {
                 slowMotionTimeScale = scale;
             },
@@ -11837,7 +12641,8 @@
             },
             setPlayerTextureType: (type) => {
                 playerTextureType = type;
-            }
+            },
+            settings: settingsModule
         });
 
         const editorViewControlsUiModule = window.BC90EEditorViewControlsUi;
@@ -11858,6 +12663,7 @@
                 canvasModeControls,
                 mapZoomControls,
                 editorLayout,
+                settings: settingsModule,
                 setToggleButtonState,
                 getGridVisible: () => isGridVisible,
                 setGridVisible: (visible) => {
@@ -11896,9 +12702,13 @@
                 resizeCanvas
             });
         editorViewControlsUi.initialize();
+        updateTouchControlsVisibility();
         editorViewControlsUi.bindPanModeButton(panModeButton);
-        debugControlsUi.initialize();
+        debugControlsUi.initialize({ allowDebug: !isPlayMode });
         setToggleButtonState(pixelCursorButton, pixelCursorUi.isEnabled());
+        pixelCursorButton.textContent =
+            `Pixel Cursor: ${pixelCursorUi.isEnabled() ? 'ON' : 'OFF'}`;
+        document.body.classList.toggle('pixel-cursor', pixelCursorUi.isEnabled());
         appearanceUi.initialize();
         updatePanModeButton();
         reloadAssetsButton.disabled = isSimulationActive;
@@ -11952,9 +12762,14 @@
             }
         });
         pixelCursorUi.setSize(Number.parseInt(pixelCursorSizeInput.value, 10) || 24);
+        if (pixelCursorUi.isEnabled()) {
+            pixelCursorUi.setState('normal');
+        }
         gridColorInput.addEventListener('input', () => {
             gridColor = gridColorInput.value;
+            settingsModule.writePreference('gridColor', gridColor);
         });
+        gridColorInput.value = gridColor;
         initialLivesInput.addEventListener('input', () => {
             if (isSimulationActive) {
                 return;
@@ -11984,6 +12799,9 @@
         });
         maxActiveEnemiesInput.addEventListener('change', () => {
             setConfiguredMaxActiveEnemies(getConfiguredMaxActiveEnemies());
+        });
+        maxActivePowerUpsInput.addEventListener('change', () => {
+            setConfiguredMaxActivePowerUps(getConfiguredMaxActivePowerUps());
         });
         resetMessagesButton.addEventListener('click', resetMessagePreferences);
         reloadAssetsButton.addEventListener('click', reloadAllAssets);
@@ -12017,7 +12835,7 @@
             recoverAudioButton.textContent = 'Activating audio...';
             audioRecoveryStatus.textContent = '';
             try {
-                await warmUpGameAudio();
+                await warmUpGameAudio({ fromUserGesture: true });
                 await preloadGameSounds();
                 assertAllGameSoundsLoaded();
 
@@ -12027,7 +12845,6 @@
                 if (isSimulationActive && !isGameOver) {
                     updateMovementAudio();
                 }
-                scheduleAudioIdleSuspension();
                 audioRecoveryStatus.textContent = 'Audio enabled.';
             } catch (error) {
                 console.error('Unable to enable game audio from settings.', error);
@@ -12038,13 +12855,21 @@
             }
         });
         startLoadedLevelButton.addEventListener('click', async () => {
+            const attempt = gameAssetPreparationAttempt;
             startLoadedLevelButton.disabled = true;
             audioLoadingText.textContent = 'Activating game audio...';
             try {
-                await warmUpGameAudio();
+                await warmUpGameAudio({ fromUserGesture: true });
+                if (attempt !== gameAssetPreparationAttempt ||
+                    !audioLoadingDialog.classList.contains('visible')) {
+                    return;
+                }
                 audioLoadingDialog.classList.remove('visible');
                 await startPreparedLevel();
             } catch (error) {
+                if (attempt !== gameAssetPreparationAttempt) {
+                    return;
+                }
                 console.error('Unable to start game audio.', error);
                 audioLoadingText.classList.add('has-error');
                 audioLoadingText.textContent =
@@ -12053,6 +12878,54 @@
                 startLoadedLevelButton.textContent = 'Retry audio';
             }
         });
+        retryAudioLoadingButton.addEventListener('click', async () => {
+            const attempt = gameAssetPreparationAttempt;
+            retryAudioLoadingButton.disabled = true;
+            retryAudioLoadingButton.textContent = 'Retrying audio...';
+            audioLoadingText.classList.remove('has-error');
+            audioLoadingText.textContent = 'Retrying audio loading and decoding...';
+            try {
+                await warmUpGameAudio({ fromUserGesture: true });
+                await preloadGameSounds();
+                if (attempt !== gameAssetPreparationAttempt ||
+                    !audioLoadingDialog.classList.contains('visible')) {
+                    return;
+                }
+                const soundsReady =
+                    soundBuffers.size === Object.keys(soundFiles).length &&
+                    failedSoundLoads.size === 0;
+                if (!soundsReady) {
+                    audioLoadingText.classList.add('has-error');
+                    audioLoadingText.textContent =
+                        'Some sounds still could not be loaded. Retry audio or start muted.';
+                    renderAssetDiagnosticReport(audioAssetReport);
+                    return;
+                }
+                audioAssetReport.hidden = true;
+                audioLoadingText.textContent =
+                    'Assets and audio are ready. You can start the level.';
+                startLoadedLevelButton.hidden = false;
+                startLoadedLevelButton.disabled = false;
+                retryAudioLoadingButton.hidden = true;
+            } catch (error) {
+                if (attempt !== gameAssetPreparationAttempt) {
+                    return;
+                }
+                console.error('Unable to retry game audio loading.', error);
+                audioLoadingText.classList.add('has-error');
+                audioLoadingText.textContent = `Audio retry failed: ${error.message}`;
+                renderAssetDiagnosticReport(audioAssetReport, error);
+            } finally {
+                if (attempt === gameAssetPreparationAttempt) {
+                    retryAudioLoadingButton.disabled = false;
+                    retryAudioLoadingButton.textContent = 'Retry Audio Loading';
+                }
+            }
+        });
+        cancelGameAssetPreparationButton.addEventListener(
+            'click',
+            cancelGameAssetPreparation
+        );
         const startupAssetsModule = window.BC90EStartupAssets;
         if (!startupAssetsModule) {
             throw new Error('The startup assets module did not load.');
@@ -12106,7 +12979,7 @@
             enableGameAudioButton.disabled = true;
             enableGameAudioButton.textContent = 'Enabling Audio...';
             try {
-                await warmUpGameAudio();
+                await warmUpGameAudio({ fromUserGesture: true });
                 await preloadGameSounds();
                 assertAllGameSoundsLoaded();
 

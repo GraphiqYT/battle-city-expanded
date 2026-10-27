@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Battle City Expanded</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=1.3.6">
     <link rel="stylesheet" href="css/ui-button-interactions.css">
 </head>
 <body class="tile-textures-mode pixelated-ui">
@@ -246,6 +246,10 @@
                                     Max Enemies On Screen
                                     <input id="maxActiveEnemiesInput" type="number" inputmode="numeric" min="1" max="20" step="1" value="4">
                                 </label>
+                                <label>
+                                    Max Power-Ups On Screen
+                                    <input id="maxActivePowerUpsInput" type="number" inputmode="numeric" min="1" max="999" step="1" value="1">
+                                </label>
                             </div>
                         </div>
                     </details>
@@ -325,30 +329,36 @@
                         Touch Controls: OFF
                     </button>
                     <div id="touchControlsConfigurator" class="touch-controls-configurator">
-                        <p>Drag the controls in the preview to set their positions.</p>
+                        <p>Drag each control to position it. Select a control to change its size.</p>
                         <div id="touchControlsPreview" class="touch-controls-preview"
                             aria-label="Draggable preview of touch controls">
-                            <div class="touch-controls-preview-pad" data-touch-preview="pad"
-                                aria-label="Move pad position">
-                                <button type="button" aria-hidden="true"></button>
-                                <button type="button" aria-hidden="true"></button>
-                                <button type="button" aria-hidden="true"></button>
-                                <button type="button" aria-hidden="true"></button>
-                            </div>
+                            <button type="button" data-touch-preview="UP"
+                                aria-label="Move up button position"></button>
+                            <button type="button" data-touch-preview="LEFT"
+                                aria-label="Move left button position"></button>
+                            <button type="button" data-touch-preview="RIGHT"
+                                aria-label="Move right button position"></button>
+                            <button type="button" data-touch-preview="DOWN"
+                                aria-label="Move down button position"></button>
                             <button id="touchControlsPreviewFire" class="touch-controls-preview-fire"
-                                data-touch-preview="fire" type="button" aria-label="Fire button position">
+                                data-touch-preview="FIRE" type="button" aria-label="Fire button position">
                                 <span aria-hidden="true">Z</span>
                             </button>
                         </div>
                         <label class="touch-control-size-label">
-                            Arrow size
-                            <input id="touchPadSizeInput" type="range" min="40" max="100" step="2" value="52">
-                            <span id="touchPadSizeValue">52 px</span>
+                            Selected control
+                            <select id="touchControlSelectionInput">
+                                <option value="UP">Up</option>
+                                <option value="LEFT">Left</option>
+                                <option value="RIGHT">Right</option>
+                                <option value="DOWN">Down</option>
+                                <option value="FIRE">Fire (Z)</option>
+                            </select>
                         </label>
                         <label class="touch-control-size-label">
-                            Fire button size
-                            <input id="touchFireSizeInput" type="range" min="48" max="120" step="2" value="74">
-                            <span id="touchFireSizeValue">74 px</span>
+                            Button size
+                            <input id="touchControlSizeInput" type="range" min="30" max="200" step="1" value="52">
+                            <span id="touchControlSizeValue">52 px</span>
                         </label>
                         <div class="touch-control-settings-actions">
                             <button id="resetTouchControlsButton" type="button">Restore defaults</button>
@@ -541,6 +551,8 @@
                 <div id="debugSettingsRow" class="debug-controls-row" hidden>
                     <button id="hitboxToggleButton" type="button">Hitboxes: OFF</button>
                     <button id="slowMotionButton" type="button">Slow Motion: OFF</button>
+                    <button id="defeatAllEnemiesButton" type="button"
+                        title="Same effect as Power-Up 5">Defeat All Enemies</button>
                     <button id="enemyDebugToggleButton" type="button">Enemy Debug: OFF</button>
                     <label class="tank-texture-control">
                         Slow Motion Speed
@@ -667,7 +679,9 @@ OVER</div>
             </details>
             <button id="startLoadedLevelButton" type="button" disabled>Start Level</button>
             <button id="startMutedLevelButton" type="button">Start without audio</button>
+            <button id="retryAudioLoadingButton" type="button" hidden>Retry Audio Loading</button>
             <button id="retryGameAssetsButton" type="button" hidden>Retry Asset Loading</button>
+            <button id="cancelGameAssetPreparationButton" type="button">Cancel</button>
         </div>
     </div>
 
@@ -679,8 +693,8 @@ OVER</div>
     <script src="js/map-camera.js"></script>
     <script src="js/map-resizer.js"></script>
     <script src="js/assets-loader.js"></script>
-    <script src="js/audio-system.js"></script>
-    <script src="js/settings.js"></script>
+    <script src="js/audio-system.js?v=1.3.6"></script>
+    <script src="js/settings.js?v=1.3.5"></script>
     <script src="js/app-state.js"></script>
     <script src="js/app-shell.js"></script>
     <script src="js/app-navigation.js"></script>
@@ -694,12 +708,12 @@ OVER</div>
     <script src="js/pack-editor-renderer.js"></script>
     <script src="js/pack-editor-dialogs.js"></script>
     <script src="js/pack-doc.js"></script>
-    <script src="js/pack-stage-editor.js"></script>
+    <script src="js/pack-stage-editor.js?v=1.3.5"></script>
     <script src="js/pack-stage-reordering.js"></script>
     <script src="js/enemy-spawn-order-ui.js"></script>
     <script src="js/number-input-steppers.js"></script>
     <script src="js/message-dialog.js"></script>
-    <script src="js/touch-controls-ui.js"></script>
+    <script src="js/touch-controls-ui.js?v=1.3.6"></script>
     <script src="js/pixel-cursor-ui.js"></script>
     <script src="js/page-scale-ui.js"></script>
     <script src="js/appearance-ui.js"></script>
@@ -712,15 +726,15 @@ OVER</div>
     <script src="js/level-score-screen.js"></script>
     <script src="js/startup-assets.js"></script>
     <script src="js/map-png-renderer.js"></script>
-    <script src="js/canvas-controls-layout.js"></script>
+    <script src="js/canvas-controls-layout.js?v=1.3.6"></script>
     <script src="js/pixel-labels.js"></script>
     <script src="js/tile-selector-previews.js"></script>
-    <script src="js/debug-controls-ui.js"></script>
+    <script src="js/debug-controls-ui.js?v=1.3.6"></script>
     <script src="js/editor-view-controls-ui.js"></script>
     <script src="js/ui-interaction-sounds.js"></script>
     <script src="js/map-validation.js"></script>
     <script src="js/app-bootstrap.js"></script>
     <script src="js/index.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/app.js?v=1.3.6"></script>
 </body>
 </html>

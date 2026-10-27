@@ -1,6 +1,11 @@
 (function (global) {
     'use strict';
 
+    const settingsDialog = document.getElementById('settingsDialog');
+    if (settingsDialog && settingsDialog.parentElement !== document.body) {
+        document.body.append(settingsDialog);
+    }
+
     function ensureElements() {
         return {
             startMenu: document.getElementById('startMenu'),
@@ -98,26 +103,39 @@
     }
 
     function openSettingsDialog() {
-        const dialog = document.getElementById('settingsDialog');
+        const dialog = settingsDialog;
         if (!dialog) {
             return false;
         }
         dialog.classList.add('menu-settings');
-        if (typeof dialog.showModal === 'function' && !dialog.open) {
-            dialog.showModal();
+        if (dialog.hasAttribute('open')) {
+            return true;
         }
+        if (typeof dialog.showModal === 'function') {
+            try {
+                dialog.showModal();
+                return true;
+            } catch (error) {
+                console.warn('Could not open the native settings dialog; using fallback.', error);
+            }
+        }
+        dialog.setAttribute('open', '');
+        document.body.classList.add('settings-dialog-fallback-open');
         return true;
     }
 
     function closeSettingsDialog() {
-        const dialog = document.getElementById('settingsDialog');
+        const dialog = settingsDialog;
         if (!dialog) {
             return false;
         }
         dialog.classList.remove('menu-settings');
         if (typeof dialog.close === 'function' && dialog.open) {
             dialog.close();
+            return true;
         }
+        dialog.removeAttribute('open');
+        document.body.classList.remove('settings-dialog-fallback-open');
         return true;
     }
 

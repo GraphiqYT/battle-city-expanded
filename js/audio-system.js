@@ -45,6 +45,14 @@
     };
 
     function ensureAudioContext() {
+        if (state.audioContext?.state === 'closed') {
+            stopAudioKeepAlive();
+            stopAllSoundSources();
+            state.audioContext = null;
+            state.resumePromise = null;
+            state.suspendPromise = null;
+            state.audioOperationPromise = null;
+        }
         if (!state.audioContext) {
             const AudioContextConstructor = global.AudioContext ||
                 global.webkitAudioContext;
@@ -99,30 +107,58 @@
         return audioOperationPromise;
     }
 
-    function resumeGameAudio() {
+    function withTimeout(promise, timeoutMs, message) {
+        let timeoutId;
+        return Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timeoutId = global.setTimeout(() => reject(new Error(message)), timeoutMs);
+            })
+        ]).finally(() => global.clearTimeout(timeoutId));
+    }
+
+    function resumeGameAudio({ fromUserGesture = false } = {}) {
         const audioContext = ensureAudioContext();
         if (!audioContext) {
             return Promise.reject(
                 new Error('This browser does not support Web Audio.')
             );
         }
-        if (state.resumePromise) {
+        if (state.resumePromise && !fromUserGesture) {
             return state.resumePromise;
         }
         if (audioContext.state === 'running' && !state.audioOperationPromise) {
             return Promise.resolve(audioContext.currentTime);
         }
 
-        const audioOperationPromise = queueAudioOperation(() => {
-            if (audioContext.state === 'running') {
-                return audioContext.currentTime;
+        const previousOperation = state.audioOperationPromise;
+        let resumeRequest;
+        try {
+            resumeRequest = audioContext.resume();
+        } catch (error) {
+            return Promise.reject(error);
+        }
+        const audioOperationPromise = Promise.resolve(resumeRequest).then(async () => {
+            if (previousOperation) {
+                await previousOperation.catch(() => {});
             }
-            return audioContext.resume().then(() => {
-                if (audioContext.state !== 'running') {
-                    throw new Error(`Game audio context is "${audioContext.state}".`);
-                }
-                return audioContext.currentTime;
-            });
+            if (audioContext.state !== 'running') {
+                await audioContext.resume();
+            }
+            if (audioContext.state !== 'running') {
+                throw new Error(`Game audio context is "${audioContext.state}".`);
+            }
+            return audioContext.currentTime;
+        });
+        state.audioOperationPromise = audioOperationPromise;
+        audioOperationPromise.then(() => {
+            if (state.audioOperationPromise === audioOperationPromise) {
+                state.audioOperationPromise = null;
+            }
+        }, () => {
+            if (state.audioOperationPromise === audioOperationPromise) {
+                state.audioOperationPromise = null;
+            }
         });
         const resumePromise = audioOperationPromise.finally(() => {
             if (state.resumePromise === resumePromise) {
@@ -134,13 +170,14 @@
     }
 
     async function warmUpGameAudio({
+        fromUserGesture = false,
         activationTimeoutMs = 10000,
         warmupTimeoutMs = 5000
     } = {}) {
         let timeoutId = 0;
         try {
             await Promise.race([
-                resumeGameAudio(),
+                resumeGameAudio({ fromUserGesture }),
                 new Promise((_, reject) => {
                     timeoutId = global.setTimeout(
                         () => reject(new Error(
@@ -196,7 +233,12 @@
 
     function startAudioKeepAlive() {
         const audioContext = ensureAudioContext();
-        if (!audioContext || audioContext.state !== 'running' || state.keepAliveSource) {
+        if (
+            state.muted ||
+            !audioContext ||
+            audioContext.state !== 'running' ||
+            state.keepAliveSource
+        ) {
             return;
         }
 
@@ -257,7 +299,7 @@
         const generation = state.generation;
         const controller = new AbortController();
         state.soundLoadControllers.add(controller);
-        const timeoutId = global.setTimeout(() => controller.abort(), timeoutMs);
+        let timeoutId = 0;
         const assetCache = global.BC90EAssetCache;
         const persistentCacheKey = assetCache?.makeKey(
             'audio',
@@ -265,15 +307,36 @@
             'encoded'
         );
         const loadAudioBuffer = async () => {
-            const cachedAudio = persistentCacheKey
-                ? await assetCache.get(persistentCacheKey)
-                : null;
+            let cachedAudio = null;
+            if (persistentCacheKey) {
+                try {
+                    cachedAudio = await withTimeout(
+                        assetCache.get(persistentCacheKey),
+                        Math.min(timeoutMs, 5000),
+                        `Reading cached audio "${name}" timed out.`
+                    );
+                } catch (error) {
+                    console.warn(
+                        `Could not read cached audio "${name}"; loading it from the server.`,
+                        error
+                    );
+                }
+            }
             if (cachedAudio instanceof ArrayBuffer) {
                 try {
-                    return await audioContext.decodeAudioData(cachedAudio.slice(0));
+                    return await withTimeout(
+                        audioContext.decodeAudioData(cachedAudio.slice(0)),
+                        Math.min(timeoutMs, 10000),
+                        `Decoding cached audio "${name}" timed out.`
+                    );
                 } catch (error) {
                     console.warn(`Discarding invalid cached audio "${name}".`, error);
-                    await assetCache.remove(persistentCacheKey);
+                    void assetCache.remove(persistentCacheKey).catch((removeError) => {
+                        console.warn(
+                            `Could not remove invalid cached audio "${name}".`,
+                            removeError
+                        );
+                    });
                 }
             }
 
@@ -284,12 +347,32 @@
                 throw new Error(`Audio request failed with status ${response.status}.`);
             }
             const audioData = await response.arrayBuffer();
-            if (persistentCacheKey) {
-                await assetCache.put(persistentCacheKey, audioData.slice(0));
+            const audioBuffer = await withTimeout(
+                audioContext.decodeAudioData(audioData.slice(0)),
+                Math.min(timeoutMs, 15000),
+                `Decoding audio "${name}" timed out.`
+            );
+            if (
+                persistentCacheKey &&
+                generation === state.generation &&
+                !controller.signal.aborted
+            ) {
+                void assetCache.put(persistentCacheKey, audioData.slice(0)).catch(
+                    (error) => {
+                        console.warn(`Could not cache audio "${name}".`, error);
+                    }
+                );
             }
-            return audioContext.decodeAudioData(audioData.slice(0));
+            return audioBuffer;
         };
-        const loadPromise = loadAudioBuffer().then((buffer) => {
+        let rejectTimeout;
+        const timeoutPromise = new Promise((_, reject) => {
+            rejectTimeout = reject;
+        });
+        const loadPromise = Promise.race([
+            loadAudioBuffer(),
+            timeoutPromise
+        ]).then((buffer) => {
             if (generation !== state.generation) {
                 throw new Error(`Audio loading for "${name}" was reset.`);
             }
@@ -321,6 +404,13 @@
         });
 
         state.soundBufferLoads.set(name, loadPromise);
+        const timeoutError = new Error(
+            `Loading audio "${name}" timed out after ${timeoutMs} ms.`
+        );
+        timeoutId = global.setTimeout(() => {
+            controller.abort();
+            rejectTimeout(timeoutError);
+        }, timeoutMs);
         return loadPromise;
     }
 
@@ -465,7 +555,7 @@
 
     function enableGameAudio() {
         state.muted = false;
-        return resumeGameAudio().then(() => {
+        return resumeGameAudio({ fromUserGesture: true }).then(() => {
             startAudioKeepAlive();
         });
     }

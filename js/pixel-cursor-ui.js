@@ -8,7 +8,8 @@
         uiTextureDirectory,
         getCanvasCursorState,
         isSimulationActive,
-        isMovingElement
+        isMovingElement,
+        settings
     }) {
         const texturePaths = {
             normal: `${uiTextureDirectory}Mouse-00.png`,
@@ -20,10 +21,16 @@
             objectMove: `${uiTextureDirectory}Mouse-02.png`
         };
         const unavailableStates = new Set();
-        let enabled = false;
+        const savedCursor = settings.readPreference('pixelCursor', {});
+        const savedCursorSettings = savedCursor && typeof savedCursor === 'object'
+            ? savedCursor
+            : {};
+        let enabled = savedCursorSettings.enabled === true;
         let pressed = false;
         let state = 'normal';
-        let size = 24;
+        let size = Number.isFinite(savedCursorSettings.size)
+            ? Math.min(96, Math.max(8, savedCursorSettings.size))
+            : 24;
 
         function setState(requestedState) {
             if (!enabled) {
@@ -46,6 +53,7 @@
             image.style.width = `${size}px`;
             image.style.height = `${size}px`;
             sizeInput.value = String(size);
+            settings.writePreference('pixelCursor', { enabled, size });
         }
 
         function isSelectableTarget(target) {
@@ -106,6 +114,7 @@
 
         function setEnabled(value) {
             enabled = Boolean(value);
+            settings.writePreference('pixelCursor', { enabled, size });
         }
 
         function getTexturePath() {

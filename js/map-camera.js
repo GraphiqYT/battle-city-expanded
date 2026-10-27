@@ -16,9 +16,14 @@
         getMapDimensions,
         isPanModeEnabled,
         syncCanvasModeControlSize,
-        onBackingSizeChanged
+        onBackingSizeChanged,
+        settings
     }) {
-        let zoomPercent = 100;
+        const savedZoomPercent = Number(settings.readPreference('mapZoomPercent', 100));
+        let zoomPercent = Number.isFinite(savedZoomPercent)
+            ? Math.round(Math.min(1600, Math.max(100, savedZoomPercent)))
+            : 100;
+        zoomInput.value = String(zoomPercent);
         let baseWidth = 0;
         let baseHeight = 0;
         let left = 0;
@@ -208,6 +213,7 @@
             zoomInButton.disabled = zoomPercent >= 1600;
             pendingLeft = left;
             pendingTop = top;
+            settings.writePreference('mapZoomPercent', zoomPercent);
         }
 
         function bindContinuousZoom(button, zoomDelta) {

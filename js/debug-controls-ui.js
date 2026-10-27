@@ -8,6 +8,7 @@
         enemyDebugToggleButton,
         hitboxToggleButton,
         slowMotionButton,
+        defeatAllEnemiesButton,
         slowMotionScaleInput,
         playerTextureRowInput,
         playerTextureTypeInput,
@@ -20,62 +21,176 @@
         setHitboxesVisible,
         getSlowMotionEnabled,
         setSlowMotionEnabled,
+        defeatAllActiveEnemies,
         setSlowMotionTimeScale,
         refreshEnemyDebugPanel,
         loadPlayerTextures,
         setPlayerTextureRow,
-        setPlayerTextureType
+        setPlayerTextureType,
+        settings
     }) {
+        let savedFeatureSettings = null;
+
+        function captureFeatureSettings() {
+            return {
+                enemyEnabled: getEnemyDebugEnabled(),
+                hitboxes: getHitboxesVisible(),
+                slowMotion: getSlowMotionEnabled(),
+                slowMotionScale: Number(slowMotionScaleInput.value),
+                playerTextureRow: Number(playerTextureRowInput.value),
+                playerTextureType: playerTextureTypeInput.value
+            };
+        }
+
+        function applyFeatureSettings(featureSettings) {
+            setEnemyDebugEnabled(featureSettings.enemyEnabled);
+            setHitboxesVisible(featureSettings.hitboxes);
+            setSlowMotionEnabled(featureSettings.slowMotion);
+            setSlowMotionTimeScale(featureSettings.slowMotionScale);
+            slowMotionScaleInput.value = String(featureSettings.slowMotionScale);
+            setPlayerTextureRow(featureSettings.playerTextureRow);
+            playerTextureRowInput.value = String(featureSettings.playerTextureRow);
+            setPlayerTextureType(featureSettings.playerTextureType);
+            playerTextureTypeInput.value = featureSettings.playerTextureType;
+            loadPlayerTextures();
+        }
+
+        function setDebugModeEnabled(enabled) {
+            if (enabled) {
+                setDebugEnabled(true);
+                applyFeatureSettings(savedFeatureSettings);
+                return;
+            }
+
+            savedFeatureSettings = captureFeatureSettings();
+            setDebugEnabled(false);
+            setEnemyDebugEnabled(false);
+            setHitboxesVisible(false);
+            setSlowMotionEnabled(false);
+            setPlayerTextureRow(0);
+            playerTextureRowInput.value = '0';
+            setPlayerTextureType('a');
+            playerTextureTypeInput.value = 'a';
+            loadPlayerTextures();
+        }
+
         function update() {
             const isDebugEnabled = getDebugEnabled();
             debugSettingsRow.hidden = !isDebugEnabled;
             debugToggleButton.textContent = `Debug: ${isDebugEnabled ? 'ON' : 'OFF'}`;
             setToggleButtonState(debugToggleButton, isDebugEnabled);
+            enemyDebugToggleButton.textContent =
+                `Enemy Debug: ${getEnemyDebugEnabled() ? 'ON' : 'OFF'}`;
+            setToggleButtonState(enemyDebugToggleButton, getEnemyDebugEnabled());
+            hitboxToggleButton.textContent =
+                `Hitboxes: ${getHitboxesVisible() ? 'ON' : 'OFF'}`;
+            setToggleButtonState(hitboxToggleButton, getHitboxesVisible());
+            slowMotionButton.textContent =
+                `Slow Motion: ${getSlowMotionEnabled() ? 'ON' : 'OFF'}`;
+            setToggleButtonState(slowMotionButton, getSlowMotionEnabled());
 
             if (!isDebugEnabled) {
                 enemyDebugPanel.hidden = true;
                 enemyDebugPanel.textContent = '';
-                setEnemyDebugEnabled(false);
-                enemyDebugToggleButton.textContent = 'Enemy Debug: OFF';
-                setToggleButtonState(enemyDebugToggleButton, false);
             }
         }
 
-        function initialize() {
-            setToggleButtonState(hitboxToggleButton, getHitboxesVisible());
-            setToggleButtonState(slowMotionButton, getSlowMotionEnabled());
-            setToggleButtonState(debugToggleButton, getDebugEnabled());
+        function initialize({ allowDebug = true } = {}) {
+            if (!allowDebug) {
+                setDebugEnabled(false);
+                setEnemyDebugEnabled(false);
+                setHitboxesVisible(false);
+                setSlowMotionEnabled(false);
+                enemyDebugPanel.hidden = true;
+                enemyDebugPanel.textContent = '';
+                debugToggleButton.closest('details.settings-section').hidden = true;
+                debugSettingsRow.hidden = true;
+                return;
+            }
+
+            const savedDebug = settings.readPreference('debugSettings', {});
+            if (savedDebug && typeof savedDebug === 'object') {
+                setDebugEnabled(savedDebug.enabled === true);
+                setEnemyDebugEnabled(savedDebug.enemyEnabled === true);
+                setHitboxesVisible(savedDebug.hitboxes === true);
+                setSlowMotionEnabled(savedDebug.slowMotion === true);
+                const slowMotionScale = Number(savedDebug.slowMotionScale);
+                if (Number.isFinite(slowMotionScale)) {
+                    slowMotionScaleInput.value = String(
+                        Math.min(1, Math.max(0, slowMotionScale))
+                    );
+                    setSlowMotionTimeScale(Number(slowMotionScaleInput.value));
+                }
+                const playerTextureRow = Number(savedDebug.playerTextureRow);
+                if (Number.isInteger(playerTextureRow)) {
+                    playerTextureRowInput.value = String(
+                        Math.min(10, Math.max(0, playerTextureRow))
+                    );
+                    setPlayerTextureRow(Number(playerTextureRowInput.value));
+                }
+                if (typeof savedDebug.playerTextureType === 'string') {
+                    const textureType = [
+                        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'
+                    ].includes(savedDebug.playerTextureType)
+                        ? savedDebug.playerTextureType
+                        : 'a';
+                    playerTextureTypeInput.value = textureType;
+                    setPlayerTextureType(textureType);
+                }
+            }
+
+            savedFeatureSettings = captureFeatureSettings();
+            if (!getDebugEnabled()) {
+                setEnemyDebugEnabled(false);
+                setHitboxesVisible(false);
+                setSlowMotionEnabled(false);
+                setPlayerTextureRow(0);
+                playerTextureRowInput.value = '0';
+                setPlayerTextureType('a');
+                playerTextureTypeInput.value = 'a';
+                loadPlayerTextures();
+            }
+
+            function saveDebugSettings() {
+                const featureSettings = getDebugEnabled()
+                    ? captureFeatureSettings()
+                    : savedFeatureSettings;
+                settings.writePreference('debugSettings', {
+                    enabled: getDebugEnabled(),
+                    ...featureSettings
+                });
+            }
+
+            update();
 
             debugToggleButton.addEventListener('click', () => {
-                setDebugEnabled(!getDebugEnabled());
+                setDebugModeEnabled(!getDebugEnabled());
                 update();
+                saveDebugSettings();
             });
             enemyDebugToggleButton.addEventListener('click', () => {
                 if (!getDebugEnabled()) {
-                    setDebugEnabled(true);
-                    update();
+                    setDebugModeEnabled(true);
                 }
-                const isEnemyDebugEnabled = !getEnemyDebugEnabled();
-                setEnemyDebugEnabled(isEnemyDebugEnabled);
-                enemyDebugToggleButton.textContent =
-                    `Enemy Debug: ${isEnemyDebugEnabled ? 'ON' : 'OFF'}`;
-                setToggleButtonState(enemyDebugToggleButton, isEnemyDebugEnabled);
+                setEnemyDebugEnabled(!getEnemyDebugEnabled());
+                savedFeatureSettings = captureFeatureSettings();
+                update();
                 refreshEnemyDebugPanel();
+                saveDebugSettings();
             });
             hitboxToggleButton.addEventListener('click', () => {
-                const areHitboxesVisible = !getHitboxesVisible();
-                setHitboxesVisible(areHitboxesVisible);
-                hitboxToggleButton.textContent =
-                    `Hitboxes: ${areHitboxesVisible ? 'ON' : 'OFF'}`;
-                setToggleButtonState(hitboxToggleButton, areHitboxesVisible);
+                setHitboxesVisible(!getHitboxesVisible());
+                savedFeatureSettings = captureFeatureSettings();
+                update();
+                saveDebugSettings();
             });
             slowMotionButton.addEventListener('click', () => {
-                const isSlowMotionEnabled = !getSlowMotionEnabled();
-                setSlowMotionEnabled(isSlowMotionEnabled);
-                slowMotionButton.textContent =
-                    `Slow Motion: ${isSlowMotionEnabled ? 'ON' : 'OFF'}`;
-                setToggleButtonState(slowMotionButton, isSlowMotionEnabled);
+                setSlowMotionEnabled(!getSlowMotionEnabled());
+                savedFeatureSettings = captureFeatureSettings();
+                update();
+                saveDebugSettings();
             });
+            defeatAllEnemiesButton.addEventListener('click', defeatAllActiveEnemies);
             slowMotionScaleInput.addEventListener('change', () => {
                 const requestedScale = Number.parseFloat(slowMotionScaleInput.value);
                 const slowMotionTimeScale = Number.isFinite(requestedScale)
@@ -83,6 +198,8 @@
                     : 0.35;
                 setSlowMotionTimeScale(slowMotionTimeScale);
                 slowMotionScaleInput.value = String(slowMotionTimeScale);
+                savedFeatureSettings = captureFeatureSettings();
+                saveDebugSettings();
             });
             playerTextureRowInput.addEventListener('change', () => {
                 const playerTextureRow = Math.min(
@@ -92,6 +209,8 @@
                 setPlayerTextureRow(playerTextureRow);
                 playerTextureRowInput.value = String(playerTextureRow);
                 loadPlayerTextures();
+                savedFeatureSettings = captureFeatureSettings();
+                saveDebugSettings();
             });
             playerTextureTypeInput.addEventListener('change', () => {
                 const playerTextureType = [
@@ -102,6 +221,8 @@
                 setPlayerTextureType(playerTextureType);
                 playerTextureTypeInput.value = playerTextureType;
                 loadPlayerTextures();
+                savedFeatureSettings = captureFeatureSettings();
+                saveDebugSettings();
             });
         }
 

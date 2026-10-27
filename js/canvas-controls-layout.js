@@ -29,7 +29,7 @@
             );
             canvasModeControls.style.setProperty(
                 '--canvas-tool-label-size',
-                `${Math.min(10, Math.max(6, canvasToolSize * 0.3))}px`
+                `${canvasToolSize * 0.34}px`
             );
             mapZoomControls.style.setProperty(
                 '--map-zoom-button-size',

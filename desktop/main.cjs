@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, protocol, shell } = require('electron');
+const { app, BrowserWindow, dialog, protocol, shell } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
@@ -103,7 +103,16 @@ function createWindow() {
         }
     });
 
-    void window.loadURL('bce://app/index.html');
+    void window.loadURL('bce://app/index.html').catch((error) => {
+        console.error('Could not load Battle City Expanded.', error);
+        dialog.showErrorBox(
+            'Battle City Expanded could not start',
+            'The game files could not be loaded. Reinstall or rebuild the app, then try again.'
+        );
+        if (!window.isDestroyed()) {
+            window.destroy();
+        }
+    });
 }
 
 app.whenReady().then(() => {

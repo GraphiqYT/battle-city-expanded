@@ -40,7 +40,7 @@
             const images = Array.from(global.document.images);
             await Promise.all(images.map(async (image) => {
                 const source = image.currentSrc || image.src;
-                if (!source) {
+                if (!source || /^(data|blob):/i.test(source)) {
                     return;
                 }
                 if (!image.complete) {

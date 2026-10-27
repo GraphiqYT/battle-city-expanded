@@ -6,7 +6,7 @@ const path = require('node:path');
 const projectRoot = path.resolve(__dirname, '..');
 const gameStage = path.join(__dirname, 'staging', 'game');
 const filesToCopy = ['index.html', 'levels.txt'];
-const directoriesToCopy = ['assets', 'packs'];
+const directoriesToCopy = ['assets', 'css', 'js', 'packs'];
 
 async function prepareGameFiles() {
     await fs.rm(gameStage, { recursive: true, force: true });

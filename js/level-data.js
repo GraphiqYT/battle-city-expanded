@@ -132,7 +132,7 @@
         }
 
         const sections = normalizedCode.split('|');
-        if (sections.length < 5 || sections.length > 9) {
+        if (sections.length < 5 || sections.length > 10) {
             return { error: 'format' };
         }
 
@@ -151,16 +151,21 @@
         const maxActiveEnemies = sections.length >= 8
             ? Number(sections[6])
             : options.defaultMaxActiveEnemies;
-        const forceInitialLives = sections.length === 9 ? sections[7] : '0';
-        const mapData = sections.length === 9
-            ? sections[8]
-            : sections.length === 8
-                ? sections[7]
-                : sections.length === 7
-                    ? sections[6]
-                    : sections.length === 6
-                        ? sections[5]
-                        : sections[4];
+        const maxActivePowerUps = sections.length === 10
+            ? Number(sections[8])
+            : options.defaultMaxActivePowerUps ?? 1;
+        const forceInitialLives = sections.length >= 9 ? sections[7] : '0';
+        const mapData = sections.length === 10
+            ? sections[9]
+            : sections.length === 9
+                ? sections[8]
+                : sections.length === 8
+                    ? sections[7]
+                    : sections.length === 7
+                        ? sections[6]
+                        : sections.length === 6
+                            ? sections[5]
+                            : sections[4];
 
         if (
             !dimensions ||
@@ -172,6 +177,9 @@
             !Number.isInteger(maxActiveEnemies) ||
             maxActiveEnemies < 1 ||
             maxActiveEnemies > options.maxActiveEnemies ||
+            !Number.isInteger(maxActivePowerUps) ||
+            maxActivePowerUps < 1 ||
+            maxActivePowerUps > (options.maxActivePowerUps ?? 999) ||
             !['0', '1'].includes(forceInitialLives)
         ) {
             return { error: 'properties' };
@@ -203,6 +211,7 @@
                 eagleMode,
                 initialLives,
                 maxActiveEnemies,
+                maxActivePowerUps,
                 forceInitialLives: forceInitialLives === '1',
                 grid
             }

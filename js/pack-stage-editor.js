@@ -105,7 +105,10 @@
         }
 
         async function saveCurrentPackStage() {
-            if (!context?.editingPackStage || typeof requestPackConfirmation !== 'function') {
+            const editingPackStage = typeof context.getEditingPackStage === 'function'
+                ? context.getEditingPackStage()
+                : context.editingPackStage;
+            if (!editingPackStage || typeof requestPackConfirmation !== 'function') {
                 return false;
             }
             if (!await requestPackConfirmation(
@@ -114,9 +117,9 @@
                 return false;
             }
 
-            const pack = savedPacks?.find((entry) => entry.id === context.editingPackStage.packId);
-            const world = pack?.worlds.find((entry) => entry.id === context.editingPackStage.worldId);
-            const stage = world?.stages.find((entry) => entry.id === context.editingPackStage.stageId);
+            const pack = savedPacks?.find((entry) => entry.id === editingPackStage.packId);
+            const world = pack?.worlds.find((entry) => entry.id === editingPackStage.worldId);
+            const stage = world?.stages.find((entry) => entry.id === editingPackStage.stageId);
             if (!stage) {
                 if (typeof showMessage === 'function') {
                     showMessage('The edited stage no longer exists in this pack.');
