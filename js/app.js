@@ -1427,6 +1427,8 @@
         const tileNameToggle = document.getElementById('tileNameToggle');
         const debugToggleButton = document.getElementById('debugToggleButton');
         const fpsCounterToggleButton = document.getElementById('fpsCounterToggleButton');
+        const selectiveAssetRetryInput =
+            document.getElementById('selectiveAssetRetryInput');
         const fpsCounter = document.getElementById('fpsCounter');
         const debugSettingsRow = document.getElementById('debugSettingsRow');
         const hitboxToggleButton = document.getElementById('hitboxToggleButton');
@@ -1540,6 +1542,8 @@
             settingsApi.readPreference('enemyDebugEnabled', false);
         let isFpsCounterEnabled = !isPlayMode &&
             settingsApi.readPreference('fpsCounterEnabled', false) === true;
+        let isSelectiveAssetRetryEnabled =
+            settingsApi.readPreference('selectiveAssetRetryEnabled', true) !== false;
         let areTouchControlsEnabled =
             settingsApi.readPreference('touchControlsEnabled', false);
         let playerTextureRow = 0;
@@ -1970,6 +1974,7 @@
         let pendingPackLaunch = null;
         let gameAssetPreparationAttempt = 0;
         let gameAssetPreparationProgressInterval = 0;
+        let lastGameAssetPreparationError = null;
 
         let mapWidth = MAP_WIDTH;
         let mapHeight = MAP_HEIGHT;
@@ -2560,6 +2565,7 @@
 
         function showAudioLoadingScreen() {
             const attempt = ++gameAssetPreparationAttempt;
+            lastGameAssetPreparationError = null;
             window.clearInterval(gameAssetPreparationProgressInterval);
             const progressInterval = window.setInterval(window.updateAssetProgress, 100);
             gameAssetPreparationProgressInterval = progressInterval;
@@ -2612,6 +2618,7 @@
                 if (attempt !== gameAssetPreparationAttempt) {
                     return;
                 }
+                lastGameAssetPreparationError = error;
                 console.error('Unable to prepare game assets.', error);
                 audioLoadingText.classList.add('has-error');
                 audioLoadingText.textContent = error.message;
@@ -3265,6 +3272,9 @@
                 try {
                     onValidTexture(cachedTexture);
                 } catch (error) {
+                    failedGameAssetLoads.set(path, error);
+                    failedTextureLoads.add(cacheKey);
+                    textureLoadStates.set(cacheKey, 'failed');
                     assetLoadStatus.hidden = false;
                     assetLoadStatus.textContent =
                         `Asset could not be prepared: ${path}.`;
@@ -3536,11 +3546,18 @@
             processTextureLoadQueue();
         }
 
-        function retryFailedDocumentImages() {
+        function retryFailedDocumentImages(error = null) {
+            const failedSource = error instanceof Error
+                ? error.message.match(
+                    /^Image (?:decoding timed out|could not be decoded|is still loading|failed to load|has no decoded content): (.+)$/
+                )?.[1]
+                : null;
             const retryToken = Date.now();
             Array.from(document.images).forEach((image, index) => {
-                if (!image.complete || image.naturalWidth > 0 || !image.src ||
-                    image.src.startsWith('data:') || image.src.startsWith('blob:')) {
+                const source = image.currentSrc || image.src;
+                const isKnownFailedImage = source === failedSource;
+                if ((!isKnownFailedImage && (!image.complete || image.naturalWidth > 0)) ||
+                    !image.src || image.src.startsWith('data:') || image.src.startsWith('blob:')) {
                     return;
                 }
 
@@ -3895,6 +3912,46 @@
             );
         }
 
+        function loadAllTextures() {
+            loadTileTextures();
+            loadPlayerTextures();
+            loadEnemyTextures();
+            loadBulletTexture();
+            loadPowerUpTextures();
+            loadExplosionTextures();
+            loadShieldTextures();
+            loadSelectionActionTextures();
+        }
+
+        function retryFailedAssetsSelectively() {
+            const hasFailedTextures =
+                failedGameAssetLoads.size > 0 || failedTextureLoads.size > 0;
+            const hasPendingTextures =
+                pendingGameAssetLoads.size > 0 ||
+                Array.from(textureLoadStates.values()).includes('loading');
+            const hasFailedSounds = failedSoundLoads.size > 0;
+            if (!hasFailedTextures && !hasPendingTextures && !hasFailedSounds) {
+                return;
+            }
+
+            assetReloadVersion += 1;
+            if (!hasFailedTextures && !hasPendingTextures) {
+                return;
+            }
+
+            textureLoadQueue.length = 0;
+            Array.from(activeTextureLoadCancels).forEach((cancelLoad) => cancelLoad());
+            pendingGameAssetLoads.clear();
+            failedGameAssetLoads.clear();
+            failedTextureLoads.clear();
+            textureLoadStates.clear();
+            assetLoadStatus.hidden = true;
+            assetLoadStatus.textContent = '';
+            delete assetLoadStatus.dataset.error;
+            assetLoadReport.hidden = true;
+            loadAllTextures();
+        }
+
         function reloadAllAssets() {
             if (isSimulationActive) {
                 return;
@@ -3940,14 +3997,7 @@
             textureLoadComplete = false;
             baseLayerCache = null;
 
-            loadTileTextures();
-            loadPlayerTextures();
-            loadEnemyTextures();
-            loadBulletTexture();
-            loadPowerUpTextures();
-            loadExplosionTextures();
-            loadShieldTextures();
-            loadSelectionActionTextures();
+            loadAllTextures();
             bypassPersistentAssetCache = false;
             pixelCursorUi.setSource(getAssetUrl(pixelCursorUi.getTexturePath()));
             document.querySelector('.player-lives-icon').src =
@@ -13073,14 +13123,7 @@
             resizeCanvas();
             applyTouchControlSettings();
         });
-        loadTileTextures();
-        loadPlayerTextures();
-        loadEnemyTextures();
-        loadBulletTexture();
-        loadPowerUpTextures();
-        loadExplosionTextures();
-        loadShieldTextures();
-        loadSelectionActionTextures();
+        loadAllTextures();
         function getCanvasCursorState() {
             if (isMovingElement) {
                 return 'objectMove';
@@ -13521,6 +13564,9 @@
             audioLoadingText.classList.remove('has-error');
             audioLoadingText.textContent = 'Retrying audio loading and decoding...';
             try {
+                if (isSelectiveAssetRetryEnabled) {
+                    retryFailedAssetsSelectively();
+                }
                 await warmUpGameAudio({ fromUserGesture: true });
                 await preloadGameSounds();
                 if (attempt !== gameAssetPreparationAttempt ||
@@ -13566,6 +13612,7 @@
         if (!startupAssetsModule) {
             throw new Error('The startup assets module did not load.');
         }
+        let lastStartupAssetPreparationError = null;
         const startupAssets = startupAssetsModule.createStartupAssets({
             loading: initialAssetLoading,
             loadingLabel: initialAssetLoadingLabel,
@@ -13581,7 +13628,10 @@
             soundBuffers,
             soundFiles,
             ensureGameFontsReady,
-            renderDiagnosticReport: renderAssetDiagnosticReport,
+            renderDiagnosticReport: (report, error) => {
+                lastStartupAssetPreparationError = error;
+                renderAssetDiagnosticReport(report, error);
+            },
             setProgressPhase: (phase) => {
                 startupAssetProgressPhase = phase;
             },
@@ -13593,10 +13643,23 @@
             }
         });
         const { prepareStartupAssets } = startupAssets;
+        selectiveAssetRetryInput.checked = isSelectiveAssetRetryEnabled;
+        selectiveAssetRetryInput.addEventListener('change', () => {
+            isSelectiveAssetRetryEnabled = selectiveAssetRetryInput.checked;
+            settingsApi.writePreference(
+                'selectiveAssetRetryEnabled',
+                isSelectiveAssetRetryEnabled
+            );
+        });
         retryInitialAssetsButton.addEventListener('click', () => {
             retryInitialAssetsButton.disabled = true;
-            reloadAllAssets();
-            retryFailedDocumentImages();
+            if (isSelectiveAssetRetryEnabled) {
+                retryFailedAssetsSelectively();
+            } else {
+                reloadAllAssets();
+            }
+            retryFailedDocumentImages(lastStartupAssetPreparationError);
+            lastStartupAssetPreparationError = null;
             void prepareStartupAssets().finally(() => {
                 retryInitialAssetsButton.disabled = false;
             });
@@ -13607,8 +13670,13 @@
         });
         retryGameAssetsButton.addEventListener('click', () => {
             retryGameAssetsButton.hidden = true;
-            retryFailedDocumentImages();
-            reloadAllAssets();
+            retryFailedDocumentImages(lastGameAssetPreparationError);
+            lastGameAssetPreparationError = null;
+            if (isSelectiveAssetRetryEnabled) {
+                retryFailedAssetsSelectively();
+            } else {
+                reloadAllAssets();
+            }
             showAudioLoadingScreen();
         });
         enableGameAudioButton.addEventListener('click', async () => {
@@ -13647,12 +13715,18 @@
         createTileSelector();
         canvasControlsLayout.initialize();
         document.addEventListener('input', (event) => {
-            if (event.target.closest?.('.app-shell')) {
+            if (
+                event.target.closest?.('.app-shell') &&
+                !event.target.closest?.('#settingsDialog')
+            ) {
                 hasUnsavedLevelChanges = true;
             }
         });
         document.addEventListener('change', (event) => {
-            if (event.target.closest?.('.app-shell')) {
+            if (
+                event.target.closest?.('.app-shell') &&
+                !event.target.closest?.('#settingsDialog')
+            ) {
                 hasUnsavedLevelChanges = true;
             }
         });

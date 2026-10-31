@@ -470,9 +470,16 @@
                             Show development tools for diagnosing gameplay behavior.
                         </p>
                         <button id="debugToggleButton" type="button">Debug: OFF</button>
+                        <p class="settings-help">
+                            Retry only assets that failed, or disable this to reload all assets.
+                        </p>
                         <button id="fpsCounterToggleButton" type="button" aria-pressed="false">
                             FPS counter: OFF
                         </button>
+                        <label>
+                            <input id="selectiveAssetRetryInput" type="checkbox" checked>
+                            Retry only failed assets
+                        </label>
                     </div>
                 </div>
             </details>
@@ -700,7 +707,7 @@ OVER</div>
     </div>
 
     <script src="js/level-data.js"></script>
-    <script src="js/app-version.js"></script>
+    <script src="js/app-version.js?v=1.41"></script>
     <script src="js/asset-cache.js"></script>
     <script src="js/game.js"></script>
     <script src="js/road-tiles.js"></script>
@@ -749,6 +756,6 @@ OVER</div>
     <script src="js/map-validation.js"></script>
     <script src="js/app-bootstrap.js"></script>
     <script src="js/index.js"></script>
-    <script src="js/app.js?v=1.4.4"></script>
+    <script src="js/app.js?v=1.41"></script>
 </body>
 </html>
