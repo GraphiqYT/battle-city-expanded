@@ -7,6 +7,8 @@
         gameFontFamilies,
         updateAssetProgress
     }) {
+        const ASSET_LOAD_STALL_TIMEOUT_MS = 90000;
+
         function withPreparationTimeout(promise, timeoutMs, message) {
             let timeoutId;
             return Promise.race([
@@ -18,15 +20,35 @@
         }
 
         async function ensureGameAssetsReady({ includeFonts = true } = {}) {
-            const deadline = Date.now() + 120000;
             while (pendingGameAssetLoads.size > 0) {
-                if (Date.now() >= deadline) {
-                    throw new Error(
-                        `${pendingGameAssetLoads.size} game asset(s) are still loading.`
-                    );
-                }
-                updateAssetProgress();
-                await new Promise((resolve) => global.setTimeout(resolve, 40));
+                await new Promise((resolve, reject) => {
+                    let isSettled = false;
+                    const cleanup = () => {
+                        global.clearTimeout(timeoutId);
+                        global.removeEventListener('gameassetsettled', onAssetSettled);
+                    };
+                    const onAssetSettled = () => {
+                        if (isSettled) {
+                            return;
+                        }
+                        isSettled = true;
+                        cleanup();
+                        resolve();
+                    };
+                    const timeoutId = global.setTimeout(() => {
+                        if (isSettled) {
+                            return;
+                        }
+                        isSettled = true;
+                        cleanup();
+                        reject(new Error(
+                            `${pendingGameAssetLoads.size} game asset(s) are still loading.`
+                        ));
+                    }, ASSET_LOAD_STALL_TIMEOUT_MS);
+                    global.addEventListener('gameassetsettled', onAssetSettled, {
+                        once: true
+                    });
+                });
             }
 
             if (failedGameAssetLoads.size > 0) {

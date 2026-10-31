@@ -2,6 +2,7 @@
     'use strict';
 
     const FORMAT_PREFIX = 'BC90E';
+    const DEFAULT_ENEMY_SPAWN_IDS = [3, 4, 5, 79, 80, 81, 82, 83];
 
     function parseDimensions(value) {
         const dimensions = value.split(',');
@@ -38,7 +39,11 @@
         return runs.join(',');
     }
 
-    function encodeEnemySpawnOrder(enemySpawnOrder, powerUpCount) {
+    function encodeEnemySpawnOrder(
+        enemySpawnOrder,
+        powerUpCount,
+        allSpawnIds = DEFAULT_ENEMY_SPAWN_IDS
+    ) {
         return enemySpawnOrder
             .map((entry) => {
                 const powerUps = [...new Set(entry.powerUps ?? [])]
@@ -46,24 +51,40 @@
                         powerUpId >= 0 && powerUpId < powerUpCount)
                     .sort((first, second) => first - second)
                     .join('.');
-                return `${entry.type}:${entry.textureType}:${powerUps}:${entry.isTnt ? 1 : 0}`;
+                const spawnIds = [...new Set(entry.spawnIds ?? allSpawnIds)]
+                    .filter((spawnId) => allSpawnIds.includes(spawnId))
+                    .sort((first, second) => allSpawnIds.indexOf(first) - allSpawnIds.indexOf(second))
+                    .join('.');
+                return `${entry.type}:${entry.textureType}:${powerUps}:${entry.isTnt ? 1 : 0}:${spawnIds}`;
             })
             .join(',');
     }
 
-    function decodeEnemySpawnOrder(value, defaultOrder, powerUpCount) {
+    function decodeEnemySpawnOrder(
+        value,
+        defaultOrder,
+        powerUpCount,
+        allSpawnIds = DEFAULT_ENEMY_SPAWN_IDS
+    ) {
         if (!value) {
             return defaultOrder();
         }
 
         const entries = value.split(',').map((entry) => {
-            const [typeValue, textureType, powerUpValue, tntValue] = entry.split(':');
+            const fields = entry.split(':');
+            const [typeValue, textureType, powerUpValue, tntValue, spawnValue] = fields;
             const type = Number(typeValue);
             const powerUps = powerUpValue
                 ? powerUpValue.split('.').map(Number)
                 : [];
+            const spawnIds = spawnValue === undefined
+                ? [...allSpawnIds]
+                : spawnValue
+                    ? spawnValue.split('.').map(Number)
+                    : [];
             const isTnt = tntValue === '1';
             if (
+                fields.length < 3 || fields.length > 5 ||
                 !Number.isInteger(type) || type < 0 || type > 10 ||
                 !'abcdefgh'.includes(textureType) ||
                 (tntValue !== undefined && !['0', '1'].includes(tntValue)) ||
@@ -72,11 +93,14 @@
                     powerUpId < 0 ||
                     powerUpId >= powerUpCount
                 ) ||
-                new Set(powerUps).size !== powerUps.length
+                new Set(powerUps).size !== powerUps.length ||
+                spawnIds.length === 0 ||
+                spawnIds.some((spawnId) => !allSpawnIds.includes(spawnId)) ||
+                new Set(spawnIds).size !== spawnIds.length
             ) {
                 return null;
             }
-            return { type, textureType, powerUps, isTnt };
+            return { type, textureType, powerUps, isTnt, spawnIds };
         });
 
         return entries.length > 0 && entries.every(Boolean) ? entries : null;
@@ -132,7 +156,7 @@
         }
 
         const sections = normalizedCode.split('|');
-        if (sections.length < 5 || sections.length > 10) {
+        if (sections.length < 5 || sections.length > 12) {
             return { error: 'format' };
         }
 
@@ -151,21 +175,31 @@
         const maxActiveEnemies = sections.length >= 8
             ? Number(sections[6])
             : options.defaultMaxActiveEnemies;
-        const maxActivePowerUps = sections.length === 10
+        const maxActivePowerUps = sections.length >= 10
             ? Number(sections[8])
             : options.defaultMaxActivePowerUps ?? 1;
+        const playerRespawnDelayMs = sections.length >= 11
+            ? Number(sections[9])
+            : options.defaultPlayerRespawnDelayMs ?? 100;
+        const powerUpLifetimeMs = sections.length >= 12
+            ? Number(sections[10])
+            : options.defaultPowerUpLifetimeMs ?? 8000;
         const forceInitialLives = sections.length >= 9 ? sections[7] : '0';
-        const mapData = sections.length === 10
-            ? sections[9]
-            : sections.length === 9
-                ? sections[8]
-                : sections.length === 8
-                    ? sections[7]
-                    : sections.length === 7
-                        ? sections[6]
-                        : sections.length === 6
-                            ? sections[5]
-                            : sections[4];
+        const mapData = sections.length >= 12
+            ? sections[11]
+            : sections.length === 11
+                ? sections[10]
+                : sections.length === 10
+                    ? sections[9]
+                    : sections.length === 9
+                        ? sections[8]
+                        : sections.length === 8
+                            ? sections[7]
+                            : sections.length === 7
+                                ? sections[6]
+                                : sections.length === 6
+                                    ? sections[5]
+                                    : sections[4];
 
         if (
             !dimensions ||
@@ -180,6 +214,15 @@
             !Number.isInteger(maxActivePowerUps) ||
             maxActivePowerUps < 1 ||
             maxActivePowerUps > (options.maxActivePowerUps ?? 999) ||
+            !Number.isInteger(playerRespawnDelayMs) ||
+            playerRespawnDelayMs < 0 ||
+            playerRespawnDelayMs >
+                (options.maxPlayerRespawnDelayMs ?? 10000) ||
+            playerRespawnDelayMs % 10 !== 0 ||
+            !Number.isInteger(powerUpLifetimeMs) ||
+            powerUpLifetimeMs < (options.minPowerUpLifetimeMs ?? 1000) ||
+            powerUpLifetimeMs > (options.maxPowerUpLifetimeMs ?? 120000) ||
+            powerUpLifetimeMs % 100 !== 0 ||
             !['0', '1'].includes(forceInitialLives)
         ) {
             return { error: 'properties' };
@@ -212,6 +255,8 @@
                 initialLives,
                 maxActiveEnemies,
                 maxActivePowerUps,
+                playerRespawnDelayMs,
+                powerUpLifetimeMs,
                 forceInitialLives: forceInitialLives === '1',
                 grid
             }

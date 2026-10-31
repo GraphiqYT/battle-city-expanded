@@ -7,6 +7,7 @@
             horizontalScrollbar,
             horizontalScrollbarTrack,
             sizeInput,
+            addButton,
             getSpawnOrder,
             getPowerUpTextures,
             getEnemyTextures,
@@ -14,6 +15,10 @@
             getPowerUpPreviewBlinkDuration,
             getMapTextureDirectory,
             getUiTextureDirectory,
+            getAllSpawnIds,
+            getActiveSpawnIds,
+            getSpawnTexture,
+            drawSpawnMarker,
             getEnemyTankType,
             getEnemyTankTextureType,
             loadEnemyTextureSet,
@@ -28,71 +33,159 @@
                 type: getEnemyTankType(),
                 textureType: getEnemyTankTextureType(),
                 powerUps: [],
-                isTnt: false
+                isTnt: false,
+                spawnIds: getAllSpawnIds()
             }));
+        }
+
+        let renderedActiveSpawnIds = '';
+        let lastPreviewUpdateTime = Number.NEGATIVE_INFINITY;
+        const previewUpdateInterval = 1000 / 12;
+        const spawnMarkerCanvases = new Map();
+        const composedSpawnPreviews = new WeakMap();
+        let enemyPreviewElements = [];
+        let spawnPreviewElements = [];
+
+        function getSpawnMarkerCanvas(spawnId, width, height) {
+            const markerKey = `${spawnId}:${width}x${height}`;
+            let markerCanvas = spawnMarkerCanvases.get(markerKey);
+            if (!markerCanvas) {
+                markerCanvas = document.createElement('canvas');
+                markerCanvas.width = width;
+                markerCanvas.height = height;
+                const markerContext = markerCanvas.getContext('2d');
+                markerContext.imageSmoothingEnabled = false;
+                drawSpawnMarker(markerContext, spawnId, width, height);
+                spawnMarkerCanvases.set(markerKey, markerCanvas);
+            }
+            return markerCanvas;
+        }
+
+        function getComposedSpawnPreview(spawnId, texture, isSelected, width, height) {
+            const markerCanvas = getSpawnMarkerCanvas(spawnId, width, height);
+            if (!texture) {
+                return markerCanvas;
+            }
+
+            let previewsByState = composedSpawnPreviews.get(texture);
+            if (!previewsByState) {
+                previewsByState = new Map();
+                composedSpawnPreviews.set(texture, previewsByState);
+            }
+            const previewKey = `${spawnId}:${width}x${height}:${isSelected}`;
+            let composedPreview = previewsByState.get(previewKey);
+            if (!composedPreview) {
+                composedPreview = document.createElement('canvas');
+                composedPreview.width = width;
+                composedPreview.height = height;
+                const previewContext = composedPreview.getContext('2d');
+                previewContext.imageSmoothingEnabled = false;
+                previewContext.globalAlpha = isSelected ? 1 : 0.4;
+                previewContext.drawImage(texture, 0, 0, width, height);
+                previewContext.globalAlpha = 1;
+                previewContext.drawImage(markerCanvas, 0, 0);
+                previewsByState.set(previewKey, composedPreview);
+            }
+            return composedPreview;
+        }
+
+        function getRowContentPosition(row, editorRect) {
+            const rowRect = row.getBoundingClientRect();
+            return {
+                left: rowRect.left - editorRect.left + editor.scrollLeft,
+                top: rowRect.top - editorRect.top + editor.scrollTop
+            };
         }
 
         function getRowPositions() {
             const positions = new Map();
+            const editorRect = editor.getBoundingClientRect();
             editor.querySelectorAll('.enemy-order-row').forEach((row) => {
                 const entry = getSpawnOrder()[Number(row.dataset.enemyOrderIndex)];
                 if (entry) {
-                    positions.set(entry, row.getBoundingClientRect());
+                    positions.set(entry, getRowContentPosition(row, editorRect));
                 }
             });
             return positions;
         }
 
-        function animateChanges(previousPositions, removedRow = null) {
-            const duration = 200;
+        function animateChanges(previousPositions, removedRow = null, addedEntry = null) {
+            const duration = 130;
+            const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const editorRect = editor.getBoundingClientRect();
             editor.querySelectorAll('.enemy-order-row').forEach((row) => {
                 const entry = getSpawnOrder()[Number(row.dataset.enemyOrderIndex)];
                 const previousRect = previousPositions.get(entry);
-                if (!previousRect) {
+                if (!previousRect || reduceMotion) {
                     return;
                 }
 
-                const nextRect = row.getBoundingClientRect();
-                const offsetX = previousRect.left - nextRect.left;
-                const offsetY = previousRect.top - nextRect.top;
+                const nextPosition = getRowContentPosition(row, editorRect);
+                const offsetX = previousRect.left - nextPosition.left;
+                const offsetY = previousRect.top - nextPosition.top;
                 if (offsetX || offsetY) {
                     row.animate(
                         [
-                            { transform: `translate(${offsetX}px, ${offsetY}px)` },
-                            { transform: 'translate(0, 0)' }
+                            { transform: `translate3d(${offsetX}px, ${offsetY}px, 0)` },
+                            { transform: 'translate3d(0, 0, 0)' }
                         ],
-                        { duration, easing: 'ease-out' }
+                        { duration, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
                     );
                 }
             });
 
             if (removedRow) {
-                const listRect = editor.getBoundingClientRect();
-                const rowRect = removedRow.rect;
-                const ghost = removedRow.element;
-                ghost.setAttribute('aria-hidden', 'true');
-                ghost.style.position = 'absolute';
-                ghost.style.zIndex = '1';
-                ghost.style.pointerEvents = 'none';
-                ghost.style.left = `${rowRect.left - listRect.left}px`;
-                ghost.style.top = `${rowRect.top - listRect.top}px`;
-                ghost.style.width = `${rowRect.width}px`;
-                ghost.style.height = `${rowRect.height}px`;
-                ghost.style.margin = '0';
-                editor.append(ghost);
-                ghost.animate(
+                const animation = removedRow.animate(
                     [
-                        { opacity: 1, transform: 'scaleY(1)' },
-                        { opacity: 0, transform: 'scaleY(0)' }
+                        { opacity: 1, transform: 'translate3d(0, 0, 0)' },
+                        { opacity: 0, transform: 'translate3d(-8px, 0, 0)' }
                     ],
-                    { duration, easing: 'ease-in', fill: 'forwards' }
-                ).onfinish = () => ghost.remove();
+                    {
+                        duration,
+                        easing: 'ease-out',
+                        fill: 'forwards'
+                    }
+                );
+                animation.finished.then(
+                    () => removedRow.remove(),
+                    () => removedRow.remove()
+                );
+            }
+
+            if (addedEntry && !reduceMotion) {
+                const addedIndex = getSpawnOrder().indexOf(addedEntry);
+                const addedRow = editor.querySelector(
+                    `.enemy-order-row[data-enemy-order-index="${addedIndex}"]`
+                );
+                addedRow?.animate(
+                    [
+                        { opacity: 0, transform: 'translate3d(0, -4px, 0)' },
+                        { opacity: 1, transform: 'translate3d(0, 0, 0)' }
+                    ],
+                    { duration, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
+                );
             }
         }
 
-        function render(previousPositions = null, removedRow = null) {
+        function render(previousPositions = null, removedRow = null, addedEntry = null) {
             const spawnOrder = getSpawnOrder();
+            const activeSpawnIds = getActiveSpawnIds();
+            const previousScrollLeft = editor.scrollLeft;
+            renderedActiveSpawnIds = activeSpawnIds.join(',');
+            if (activeSpawnIds.length > 0) {
+                spawnOrder.forEach((entry) => {
+                    entry.spawnIds ??= getAllSpawnIds();
+                    if (!activeSpawnIds.some((spawnId) => entry.spawnIds.includes(spawnId))) {
+                        entry.spawnIds = [...activeSpawnIds];
+                    }
+                });
+            }
+            editor.querySelectorAll('.enemy-order-row').forEach((row) => {
+                row.getAnimations().forEach((animation) => animation.cancel());
+            });
             editor.replaceChildren();
+            enemyPreviewElements = [];
+            spawnPreviewElements = [];
 
             spawnOrder.forEach((entry, index) => {
                 const row = document.createElement('div');
@@ -110,6 +203,7 @@
                 preview.height = 32;
                 preview.getContext('2d').imageSmoothingEnabled = false;
                 preview.dataset.enemyOrderIndex = String(index);
+                enemyPreviewElements.push(preview);
 
                 const typeSelect = document.createElement('select');
                 if (entry.type === 0) {
@@ -209,6 +303,57 @@
                 });
                 actions.append(tntButton);
 
+                const spawnList = document.createElement('div');
+                spawnList.className = 'enemy-spawn-choice-list';
+                spawnList.setAttribute('role', 'group');
+                spawnList.setAttribute('aria-label', `Enemy spawns for enemy ${index + 1}`);
+                entry.spawnIds ??= getAllSpawnIds();
+                const selectedSpawnIds = new Set(entry.spawnIds);
+                activeSpawnIds.forEach((spawnId) => {
+                    const spawnLabel = getAllSpawnIds().indexOf(spawnId) + 1;
+                    const toggleLabel = document.createElement('label');
+                    toggleLabel.className = 'enemy-spawn-choice';
+                    toggleLabel.title = `Enemy spawn ${spawnLabel}`;
+
+                    const toggle = document.createElement('input');
+                    toggle.type = 'checkbox';
+                    toggle.checked = selectedSpawnIds.has(spawnId);
+                    toggle.setAttribute('aria-label', `Enemy spawn ${spawnLabel}`);
+                    toggleLabel.classList.toggle('is-selected', toggle.checked);
+                    const spawnPreview = document.createElement('canvas');
+                    spawnPreview.className = 'enemy-spawn-choice-preview';
+                    spawnPreview.width = 24;
+                    spawnPreview.height = 24;
+                    spawnPreview.dataset.spawnId = String(spawnId);
+                    spawnPreview.dataset.isSelected = String(toggle.checked);
+                    spawnPreview.getContext('2d').imageSmoothingEnabled = false;
+                    spawnPreviewElements.push(spawnPreview);
+                    toggle.addEventListener('change', () => {
+                        const selectedActiveSpawnCount = activeSpawnIds.filter(
+                            (id) => selectedSpawnIds.has(id)
+                        ).length;
+                        if (!toggle.checked && selectedActiveSpawnCount === 1) {
+                            toggle.checked = true;
+                            return;
+                        }
+                        toggleLabel.classList.toggle('is-selected', toggle.checked);
+                        spawnPreview.dataset.isSelected = String(toggle.checked);
+                        if (toggle.checked) {
+                            selectedSpawnIds.add(spawnId);
+                        } else {
+                            selectedSpawnIds.delete(spawnId);
+                        }
+                        entry.spawnIds = getAllSpawnIds().filter(
+                            (id) => selectedSpawnIds.has(id)
+                        );
+                        delete spawnPreview.dataset.renderedSelection;
+                    });
+
+                    toggleLabel.append(toggle, spawnPreview);
+                    spawnList.append(toggleLabel);
+                });
+                actions.append(spawnList);
+
                 const moveButton = (label, delta, disabled) => {
                     const button = document.createElement('button');
                     button.type = 'button';
@@ -249,14 +394,34 @@
                 removeButton.prepend(removeIcon);
                 removeButton.addEventListener('click', () => {
                     const previousRowPositions = getRowPositions();
-                    const removedRowElement = row.cloneNode(true);
                     const removedRowRect = row.getBoundingClientRect();
+                    let removedRow = null;
+                    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                        row.getAnimations().forEach((animation) => animation.cancel());
+                        const zoom = Math.max(
+                            0.01,
+                            Number.parseFloat(row.style.zoom) / 100 || 1
+                        );
+                        row.setAttribute('aria-hidden', 'true');
+                        row.inert = true;
+                        row.querySelectorAll('button, input, select, textarea').forEach(
+                            (control) => {
+                                control.disabled = true;
+                            }
+                        );
+                        row.style.position = 'fixed';
+                        row.style.zIndex = '1';
+                        row.style.pointerEvents = 'none';
+                        row.style.left = `${removedRowRect.left}px`;
+                        row.style.top = `${removedRowRect.top}px`;
+                        row.style.width = `${removedRowRect.width / zoom}px`;
+                        row.style.margin = '0';
+                        document.body.append(row);
+                        removedRow = row;
+                    }
                     spawnOrder.splice(index, 1);
                     updateEnemyLivesDisplay();
-                    render(previousRowPositions, {
-                        element: removedRowElement,
-                        rect: removedRowRect
-                    });
+                    render(previousRowPositions, removedRow);
                 });
                 actions.append(removeButton);
 
@@ -265,11 +430,33 @@
             });
 
             syncHorizontalScrollbar();
+            editor.scrollLeft = addedEntry
+                ? Math.max(0, editor.scrollWidth - editor.clientWidth)
+                : Math.min(
+                    previousScrollLeft,
+                    Math.max(0, editor.scrollWidth - editor.clientWidth)
+                );
+            horizontalScrollbar.scrollLeft = editor.scrollLeft;
             if (previousPositions || removedRow) {
                 global.requestAnimationFrame(() => {
-                    animateChanges(previousPositions ?? new Map(), removedRow);
+                    animateChanges(previousPositions ?? new Map(), removedRow, addedEntry);
                 });
             }
+        }
+
+        function addEnemy() {
+            const spawnOrder = getSpawnOrder();
+            const previousPositions = getRowPositions();
+            const entry = {
+                type: getEnemyTankType(),
+                textureType: getEnemyTankTextureType(),
+                powerUps: [],
+                isTnt: false,
+                spawnIds: getAllSpawnIds()
+            };
+            spawnOrder.push(entry);
+            updateEnemyLivesDisplay();
+            render(previousPositions, null, entry);
         }
 
         function syncHorizontalScrollbar() {
@@ -324,9 +511,24 @@
         }
 
         function updatePreviews(timestamp) {
+            if (
+                timestamp >= lastPreviewUpdateTime &&
+                timestamp - lastPreviewUpdateTime < previewUpdateInterval
+            ) {
+                return;
+            }
+            lastPreviewUpdateTime = timestamp;
+
+            const activeSpawnIds = getActiveSpawnIds();
+            if (activeSpawnIds.join(',') !== renderedActiveSpawnIds) {
+                render();
+            }
+
             const frame = Math.floor(timestamp / getPlayerMoveFrameDuration()) % 2;
-            editor.querySelectorAll('.enemy-order-preview').forEach((preview) => {
-                const entry = getSpawnOrder()[Number(preview.dataset.enemyOrderIndex)];
+            const spawnOrder = getSpawnOrder();
+            const enemyTextures = getEnemyTextures();
+            enemyPreviewElements.forEach((preview) => {
+                const entry = spawnOrder[Number(preview.dataset.enemyOrderIndex)];
                 if (!entry) {
                     return;
                 }
@@ -336,13 +538,14 @@
                     entry.isTnt === true,
                     timestamp
                 );
-                loadEnemyTextureDefinition(previewTextureType, entry.type, 'left');
-                const frames = getEnemyTextures()
-                    .get(`${previewTextureType}-${entry.type}-left`);
-                const frameKey = `${previewTextureType}-${entry.type}-${frame}`;
-                if (preview.dataset.renderedEnemyTexture === frameKey) {
+                const frameKey = `${previewTextureType}-${entry.type}-left`;
+                const visualFrameKey = `${frameKey}-${frame}`;
+                if (preview.dataset.renderedEnemyTexture === visualFrameKey) {
                     return;
                 }
+
+                loadEnemyTextureDefinition(previewTextureType, entry.type, 'left');
+                const frames = enemyTextures.get(frameKey);
 
                 const previewContext = preview.getContext('2d');
                 previewContext.clearRect(0, 0, preview.width, preview.height);
@@ -355,12 +558,43 @@
                         preview.height
                     );
                 }
-                preview.dataset.renderedEnemyTexture = frameKey;
+                preview.dataset.renderedEnemyTexture = visualFrameKey;
+            });
+
+            const spawnTextures = new Map();
+            spawnPreviewElements.forEach((preview) => {
+                const spawnId = Number(preview.dataset.spawnId);
+                if (!spawnTextures.has(spawnId)) {
+                    spawnTextures.set(spawnId, getSpawnTexture(spawnId, timestamp));
+                }
+                const texture = spawnTextures.get(spawnId);
+                const isSelected = preview.dataset.isSelected === 'true';
+                const renderedSelection = String(isSelected);
+                const composedPreview = getComposedSpawnPreview(
+                    spawnId,
+                    texture,
+                    isSelected,
+                    preview.width,
+                    preview.height
+                );
+                if (
+                    preview.renderedSpawnTexture === composedPreview &&
+                    preview.dataset.renderedSelection === renderedSelection
+                ) {
+                    return;
+                }
+
+                const previewContext = preview.getContext('2d');
+                previewContext.clearRect(0, 0, preview.width, preview.height);
+                previewContext.drawImage(composedPreview, 0, 0);
+                preview.renderedSpawnTexture = composedPreview;
+                preview.dataset.renderedSelection = renderedSelection;
             });
         }
 
         sizeInput.addEventListener('input', updateSize);
         sizeInput.addEventListener('change', updateSize);
+        addButton.addEventListener('click', addEnemy);
 
         return Object.freeze({
             createDefaultEnemySpawnOrder,

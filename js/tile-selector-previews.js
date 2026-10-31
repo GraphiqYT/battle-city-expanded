@@ -36,7 +36,7 @@
             getPixelLabelCanvas
         } = context;
         const previewUrls = new Map();
-        const updateInterval = 32;
+        const updateInterval = 1000 / 16;
         let lastUpdateAt = -Infinity;
 
         function getPreviewKey(tileId, timestamp, previewState) {

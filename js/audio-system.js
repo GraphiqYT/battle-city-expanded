@@ -39,6 +39,8 @@
         audioOperationPromise: null,
         generation: 0,
         muted: false,
+        hasUserInteractedWithAudio: false,
+        hasUserActivatedAudio: false,
         getAssetUrl: null,
         onSoundLoaded: null,
         onSoundFailed: null
@@ -118,6 +120,9 @@
     }
 
     function resumeGameAudio({ fromUserGesture = false } = {}) {
+        if (fromUserGesture) {
+            state.hasUserInteractedWithAudio = true;
+        }
         const audioContext = ensureAudioContext();
         if (!audioContext) {
             return Promise.reject(
@@ -128,6 +133,9 @@
             return state.resumePromise;
         }
         if (audioContext.state === 'running' && !state.audioOperationPromise) {
+            if (fromUserGesture) {
+                state.hasUserActivatedAudio = true;
+            }
             return Promise.resolve(audioContext.currentTime);
         }
 
@@ -147,6 +155,9 @@
             }
             if (audioContext.state !== 'running') {
                 throw new Error(`Game audio context is "${audioContext.state}".`);
+            }
+            if (fromUserGesture) {
+                state.hasUserActivatedAudio = true;
             }
             return audioContext.currentTime;
         });

@@ -1,8 +1,8 @@
 (function (global) {
     'use strict';
 
-    const version = '1.3';
-    const assetCacheVersion = '1.3';
+    const version = '1.4';
+    const assetCacheVersion = '1.4';
     const label = `v${version}`;
 
     document.querySelectorAll('[data-app-version]').forEach((element) => {
